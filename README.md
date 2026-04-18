@@ -12,14 +12,13 @@
 ## 🚀 Live Demo
 
 Streamlit App:  
-[https://ai-governance-platform-jtyylsph.streamlit.app/)
+(https://ai-governance-platform-jtyylsph.streamlit.app/)
 
 ---
 
 ## 📂 Repository
 
-GitHub:  
-[https://github.com/kalebshi-maker/ai-risk-governance-platform/tree/main)
+GitHub:  (https://github.com/kalebshi-maker/ai-risk-governance-platform/tree/main)
 
 ---
 
