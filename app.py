@@ -300,7 +300,13 @@ def ingest_file(file):
 
 # =============================
 
-# UI SETTINGS
+# 🔒 YOUR BLOCK (UNCHANGED)
+
+# =============================
+
+# =============================
+
+# DARK MODE TOGGLE
 
 # =============================
 
@@ -317,6 +323,12 @@ if dark_mode:
         </style>
 
     """, unsafe_allow_html=True)
+
+# =============================
+
+# PAGE TITLE
+
+# =============================
 
 st.title("🚀 JTYYLSPH — AI Governance Platform")
 
@@ -344,59 +356,171 @@ if "messages" not in st.session_state:
 
 # =============================
 
+st.sidebar.header("Compliance Mode")
+
 jurisdiction = st.sidebar.selectbox(
 
-    "Regulatory Framework",
+    "Select Regulatory Framework",
 
     [
 
         "United States (SR 11-7)",
 
-        "EU AI Act",
+        "European Union (EU AI Act)",
 
-        "UK Guidance",
+        "UK Model Risk Guidance",
 
-        "APAC",
+        "APAC General Risk Framework",
 
-        "Custom",
+        "Custom Enterprise Policy",
 
     ],
 
 )
 
+st.sidebar.header("Dataset Controls")
+
+domain = st.sidebar.selectbox(
+
+    "Synthetic Dataset",
+
+    ["Finance", "Healthcare", "Sports", "Business", "Emotion", "General"]
+
+)
+
 uploaded = st.sidebar.file_uploader("Upload CSV", type=["csv"])
 
+uploaded_files = st.sidebar.file_uploader(
+
+    "Upload Dataset or Documents",
+
+    accept_multiple_files=True,
+
+    type=[
+
+        "csv", "xlsx", "json", "parquet",
+
+        "pdf", "docx", "txt", "log",
+
+        "xml", "sql",
+
+        "png", "jpg", "jpeg",
+
+    ],
+
+)
+
+st.sidebar.header("Database Connection")
+
+db_url = st.sidebar.text_input("SQLAlchemy DB URL", placeholder="postgresql://user:pass@host:5432/db")
+
+query = st.sidebar.text_area("SQL Query", placeholder="SELECT * FROM table LIMIT 100")
+
 # =============================
 
-# DATA
+# DATA LOADING
 
 # =============================
 
-if uploaded:
+X, y, df = None, None, None
+
+if query and db_url:
+
+    from sqlalchemy import create_engine
+
+    try:
+
+        engine = create_engine(db_url)
+
+        df = pd.read_sql(query, engine)
+
+        st.write("Database Data")
+
+        st.dataframe(df.head())
+
+    except Exception as e:
+
+        st.error(f"Database error: {e}")
+
+        st.stop()
+
+elif uploaded_files:
+
+    dfs = []
+
+    for f in uploaded_files:
+
+        df_part = ingest_file(f)
+
+        if df_part is not None:
+
+            dfs.append(df_part)
+
+    if dfs:
+
+        df = pd.concat(dfs, ignore_index=True, sort=False)
+
+        st.write("Combined Dataset")
+
+        st.dataframe(df.head())
+
+elif uploaded:
 
     df = pd.read_csv(uploaded)
 
+    st.write("Uploaded Dataset")
+
+    st.dataframe(df.head())
+
 else:
 
-    X_data, y_data = make_classification(n_samples=500, n_features=6)
+    X_data, y_data = make_classification(n_samples=500, n_features=6, random_state=42)
 
     df = pd.DataFrame(X_data)
 
     df["target"] = y_data
 
-target_col = st.selectbox("Target Column", df.columns)
-
-X = df.drop(columns=[target_col])
-
-y = df[target_col]
-
-if y.dtype == "object":
-
-    y = LabelEncoder().fit_transform(y)
+    st.info(f"Using synthetic dataset: {domain}")
 
 # =============================
 
-# TRAIN
+# TARGET SELECTION
+
+# =============================
+
+if df is not None:
+
+    if len(df.columns) > 1:
+
+        target_col = st.sidebar.selectbox("Target Column", df.columns)
+
+        X = df.drop(columns=[target_col])
+
+        y = df[target_col]
+
+    else:
+
+        X = df
+
+        y = pd.Series(np.random.randint(0, 2, len(df)))
+
+if X is None or len(X) == 0:
+
+    st.error("No valid dataset loaded.")
+
+    st.stop()
+
+X.columns = [str(c) for c in X.columns]
+
+st.write("Dataset Shape:", X.shape)
+
+st.write("### Dataset Summary")
+
+st.write(X.describe())
+
+# =============================
+
+# TRAIN + DASHBOARD + AI
 
 # =============================
 
@@ -423,12 +547,6 @@ if st.button("Train Model"):
     st.session_state.metrics = (drift, fairness, stability)
 
     log_run("RandomForest", drift, fairness, stability, jurisdiction)
-
-# =============================
-
-# DASHBOARD
-
-# =============================
 
 if st.session_state.metrics:
 
