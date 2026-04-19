@@ -514,5 +514,5 @@ if api_key and st.session_state.metrics:
     # Display chat history
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
-            st.write(msg["content"])
+            st.write(msg["content"]) 
 
