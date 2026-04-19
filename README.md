@@ -1,5 +1,5 @@
-# JTYYLSPH — Enterprise AI Governance Platform
-
+# 🧾 🚀 AUREXIS SYSTEMS
+Real-Time Governance Infrastructure for Production AI Systems
 ![Python](https://img.shields.io/badge/Python-3.10-blue)
 ![ML](https://img.shields.io/badge/Machine%20Learning-Scikit--Learn-orange)
 ![Streamlit](https://img.shields.io/badge/Deployed-Streamlit-red)
@@ -22,189 +22,89 @@ GitHub:  (https://github.com/kalebshi-maker/ai-risk-governance-platform/tree/mai
 
 ---
 
-## 🎯 Key Features
+🌍 Overview
+Aurexis Systems is a real-time AI governance platform that monitors, evaluates, and controls machine learning systems in production.
+We provide continuous visibility into:
+Model drift
+Fairness deviation
+System stability
+Regulatory compliance
+“If AI systems are becoming infrastructure, then governance must become real-time.”
 
-### Core ML
-- AutoML model training (RandomForest, GradientBoosting, LogisticRegression)
-- Classification & regression tasks
-- Risk prediction and decision analytics
-- Multi-domain dataset support (Finance, Healthcare, Sports, General)
+🚨 Problem
+Modern AI systems fail in production due to:
+Data drift → silent performance degradation
+Bias amplification → regulatory and reputational risk
+Lack of monitoring → post-hoc failure detection
+Fragmented compliance workflows
+AI systems are deployed faster than they can be governed.
 
-### Governance
-- SQL-based model registry with versioning
-- Model approval workflow
-- Model logging and reproducibility
-- End-to-end ML pipeline management
+💡 Solution
+Aurexis provides a real-time governance layer for AI systems, including:
+📊 Continuous Monitoring
+Drift detection (Wasserstein / statistical tests)
+Fairness analysis across sensitive attributes
+Stability scoring for model behavior
+⚖️ Governance Engine
+Model approval workflows
+Risk scoring system
+Compliance tracking (EU AI Act, SR 11-7)
+📄 Explainability Layer
+SHAP-based interpretability
+LLM-powered natural language explanations
 
-### Monitoring
-- Real-time drift detection (Wasserstein + KS test)
-- Bias/fairness detection across sensitive features
-- Alerts and metric logging
+🏗 System Architecture
+Frontend: Streamlit dashboard
+Backend: FastAPI inference + governance API
+Storage: SQL-based model registry
+Monitoring: Real-time statistical drift engine
+Deployment: Dockerized production pipeline
 
-### Explainability
-- SHAP global & local explanations
-- LLM-based explainers for natural language model interpretations
-- Feature importance & correlation analysis
+🧠 Key Capabilities
+Multi-domain ML support (Finance, Healthcare, Business)
+Real-time model drift detection
+Bias & fairness monitoring
+Automated compliance reporting
+Model versioning & registry
+Explainable AI layer (SHAP + LLM)
 
-### API & Deployment
-- REST API with FastAPI
-- Authentication support
-- Docker-ready for production deployment
-- Streamlit web dashboard
+📈 Example Use Cases
+Financial risk modeling & compliance monitoring
+Healthcare predictive systems (bias-sensitive environments)
+Enterprise AI governance & audit workflows
+Regulated industry ML deployment (banking, insurance)
 
-**Folder Overview:**  
-- `automl/` - automated ML training engine  
-- `explainability/` - SHAP and LLM model explanations  
-- `monitoring/` - drift and bias monitoring utilities  
-- `governance/` - model approval workflows and risk assessment  
-- `registry/` - SQL-based production model registry  
-- `dashboard/` - Streamlit front-end UI  
+📊 Evaluation Metrics
+Accuracy / F1 Score
+Drift magnitude (Wasserstein distance)
+Fairness deviation score
+System stability index
+Compliance risk classification
 
----
-
-## 🧠 Architecture Overview
-
-**Frontend:** Streamlit dashboard  
-**Backend:** FastAPI service  
-**Storage:** SQL model registry  
-**Monitoring:** Drift + bias detection  
-**Deployment:** Docker & Docker Compose 
-JTYYLSPH/
-│
-├── api/                  # FastAPI REST API
-├── automl/               # Automated ML engines
-├── explainability/       # SHAP & LLM explainers
-├── monitoring/           # Drift & bias monitoring
-├── governance/           # Approval workflow & risk rating
-├── registry/             # SQL model registry
-├── dashboard/            # Streamlit UI
-├── tests/                # Unit & integration tests
-├── docker/               # Dockerfiles & docker-compose
-├── scripts/              # Training & deployment scripts
-├── models/               # Trained model storage
-├── requirements.txt
-├── README.md
-├── LICENSE
-└── .github/              # GitHub CI/CD workflows
----
-
-## ⚙️ Installation
-
-### Clone repository
-
-```bash
-git clone https://github.com/hs5738-design/jtyylsph-ml-dashboard.git
-cd jtyylsph-ml-dashboard
-Install dependencies
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-Run locally
-# Start API backend
-uvicorn api.main:app --reload
-
-# Start Streamlit dashboard
-streamlit run dashboard/streamlit_app.py
-Docker (Production-ready)
-docker-compose up --build
-
-🔬 Example Use Cases
-Financial risk prediction and scoring
+🧩 Why Aurexis Systems
+Unlike existing ML monitoring tools, Aurexis is:
+Category
+Existing Tools
+Aurexis Systems
+Monitoring
+Post-deployment alerts
+Real-time governance
+Focus
+Metrics dashboards
+Risk infrastructure
+Scope
+Single model tracking
+System-wide AI governance
+Output
+Logs & alerts
+Compliance-ready decisions
 
 
-Healthcare classification & diagnosis prediction
-
-
-Policy compliance & governance analytics
-
-
-Supply chain & operational risk modeling
-
-
-Experimental ML research and teaching
-
-📊 Model Capabilities
-Domain
-Accuracy
-F1 Score
-Notes
-Financial Risk
-88%
-0.87
-LogisticRegression baseline
-Synthetic Classification
-90%+
-0.91
-AutoML-selected RandomForest
-Healthcare
-85%
-0.84
-GradientBoosting
-General Multi-domain
-88%+
-0.88
-Ensemble models
-
-
-📈 Evaluation Metrics
-Accuracy, Precision, Recall, F1 Score
-
-
-Confusion Matrix
-
-
-ROC Curve & AUC
-
-
-Feature importance & correlation heatmaps
-
-
-SHAP global and local explanations
-
-📌 Engineering Highlights
-Modular, extensible architecture
-
-
-Explainable ML & LLM design principles
-
-
-Production-oriented logging & versioning
-
-
-Multi-domain adaptability
-
-
-Interactive visualization dashboard
-
-
-Reproducible end-to-end ML training pipeline
-
-
-SQL-based persistent model registry
-
-
-Model approval workflow for enterprise compliance
-
-🤝 Contributing
-Contributions are welcome! Please follow the standard GitHub workflow:
-Fork repository
-
-
-Create a feature branch (git checkout -b feature/my-feature)
-
-
-Commit changes (git commit -am 'Add feature')
-
-
-Push branch (git push origin feature/my-feature)
-
-
-Open a Pull Request
-
-📜 License
-MIT License. See LICENSE file for details.
+🧭 Vision
+We envision a world where:
+AI systems are governed like financial systems, with continuous monitoring, risk engines, and regulatory-grade transparency.
 
 👨‍💻 Author
 Kaleb Carter Shi
----
-
+ Founder, Aurexis Systems
 
