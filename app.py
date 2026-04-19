@@ -1,5 +1,5 @@
 # =============================
-# 🚀 JTYYLSPH — AI Governance Platform
+# 🚀 Aurexis Systems — AI Governance Infrastructure for Enterprise-Scale Systems
 # =============================
 import streamlit as st
 import pandas as pd
@@ -168,7 +168,7 @@ if dark_mode:
 # =============================
 # PAGE TITLE
 # =============================
-st.title("🚀 JTYYLSPH — AI Governance Platform")
+st.title("🚀 Aurexis Systems — Control Layer for Enterprise AI Systems")
 # =============================
 # SESSION STATE
 # =============================
@@ -473,10 +473,11 @@ logs = load_logs()
 if logs:
     st.dataframe(pd.DataFrame(logs))
 # =============================
-# ChatJTYYLSPH AI ASSISTANT
+# ChatAS AI ASSISTANT
 # =============================
 api_key = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
-
+st.write("DEBUG: API key exists?", bool(api_key))
+st.write("DEBUG: Key preview:", api_key[:7] if api_key else "None")
 if api_key and st.session_state.metrics:
     client = OpenAI(api_key=api_key)
 
