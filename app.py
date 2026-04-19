@@ -1,4 +1,3 @@
-Establishing rules and timing is like setting up a formation for the Qimen Dunjia, and creating a holographic AI linked to the Earth system to simulate the operation status and laws of celestial bodies
 # =============================
 # 🚀 JTYYLSPH — AI Governance Platform
 # =============================
@@ -67,15 +66,19 @@ def simulate_stream(X_test, steps=20, noise_level=0.05):
 # =============================
 def compute_drift(X_train, X_test):
     try:
-        col = X_train.select_dtypes(include=[np.number]).columns[0]
-        x1 = X_train[col].fillna(0)
-        x2 = X_test[col].fillna(0)
-        return float(wasserstein_distance(x1, x2))
-    except:
-        return 0.0
-def compute_fairness(preds, y_true):
-    try:
-        return float(abs(np.mean(preds) - np.mean(y_true)))
+        num_cols = X_train.select_dtypes(include=[np.number]).columns
+
+        if len(num_cols) == 0:
+            return 0.0
+
+        distances = []
+        for col in num_cols:
+            x1 = (X_train[col] - X_train[col].mean()) / (X_train[col].std() + 1e-6)
+            x2 = (X_test[col] - X_test[col].mean()) / (X_test[col].std() + 1e-6)
+
+            distances.append(wasserstein_distance(x1, x2))
+
+        return float(np.mean(distances))
     except:
         return 0.0
 def system_stability_score(drift, fairness):
@@ -272,92 +275,175 @@ def generate_domain_dataset(domain, n_samples=500):
         df["target"] = y
     return df
 # =============================
-# DATA LOADING
+# DATA PIPELINE (FIXED)
 # =============================
-X, y, df = None, None, None
-if query and db_url:
-    from sqlalchemy import create_engine
-    try:
-        engine = create_engine(db_url)
-        df = pd.read_sql(query, engine)
-        st.write("Database Data")
-        st.dataframe(df.head())
-    except Exception as e:
-        st.error(f"Database error: {e}")
-        st.stop()
-elif uploaded_files:
-    dfs = []
-    for f in uploaded_files:
-        df_part = ingest_file(f)
-        if df_part is not None:
-            dfs.append(df_part)
-    if dfs:
-        df = pd.concat(dfs, ignore_index=True, sort=False)
-        st.write("Combined Dataset")
-        st.dataframe(df.head())
-elif uploaded:
-    df = pd.read_csv(uploaded)
-    st.write("Uploaded Dataset")
-    st.dataframe(df.head())
-else:
-    df = generate_domain_dataset(domain)
-st.info(f"Using synthetic dataset: {domain}")
-    df = pd.DataFrame(X_data)
-    df["target"] = y_data
-    st.info(f"Using synthetic dataset: {domain}")
+def load_data():
+    # Priority: DB > multi-upload > single upload > synthetic
+    if query and db_url:
+        from sqlalchemy import create_engine
+        try:
+            engine = create_engine(db_url)
+            df = pd.read_sql(query, engine)
+            st.success("Loaded data from database")
+            return df, "database"
+        except Exception as e:
+            st.error(f"Database error: {e}")
+
+    if uploaded_files:
+        dfs = []
+        for f in uploaded_files:
+            df_part = ingest_file(f)
+            if df_part is not None:
+                dfs.append(df_part)
+        if dfs:
+            return pd.concat(dfs, ignore_index=True, sort=False), "multi_upload"
+
+    if uploaded:
+        try:
+            return pd.read_csv(uploaded), "upload"
+        except Exception as e:
+            st.error(f"CSV error: {e}")
+
+    return generate_domain_dataset(domain), "synthetic"
+
+
+df, data_source = load_data()
+st.info(f"Data source: {data_source}")
+st.dataframe(df.head())
 # =============================
-# TARGET SELECTION
+# TARGET HANDLING
 # =============================
-if df is not None:
-    if len(df.columns) > 1:
-        target_col = st.sidebar.selectbox("Target Column", df.columns)
-        X = df.drop(columns=[target_col])
-        y = df[target_col]
-    else:
-        X = df
-        y = pd.Series(np.random.randint(0, 2, len(df)))
-if X is None or len(X) == 0:
-    st.error("No valid dataset loaded.")
+def prepare_features(df):
+    if len(df.columns) < 2:
+        st.error("Dataset must have at least 2 columns.")
+        return None, None
+
+    target_col = st.sidebar.selectbox("Target Column", df.columns)
+
+    X = df.drop(columns=[target_col]).copy()
+    y = df[target_col].copy()
+
+    # Encode non-numeric
+    for col in X.select_dtypes(include="object"):
+        X[col] = LabelEncoder().fit_transform(X[col].astype(str))
+
+    # Fill missing
+    X = X.fillna(0)
+    y = y.fillna(0)
+
+    return X, y
+
+
+X, y = prepare_features(df)
+
+if X is None:
     st.stop()
-X.columns = [str(c) for c in X.columns]
-st.write("Dataset Shape:", X.shape)
-st.write("### Dataset Summary")
-st.write(X.describe())
+# =============================
+# DYNAMIC SYSTEM SIMULATION
+# =============================
+def simulate_system(X_test, steps=30):
+    current = X_test.copy().astype(float)
+
+    for t in range(steps):
+        try:
+            # cyclical drift (like orbital mechanics)
+            phase = np.sin(t / 5)
+
+            noise = np.random.normal(0, 0.02 + abs(phase)*0.05, current.shape)
+
+            # directional drift (system bias evolution)
+            drift_vector = phase * 0.01
+
+            current = current + noise + drift_vector
+            current = current.fillna(0)
+
+            yield t, current
+
+            time.sleep(0.15)
+        except:
+            yield t, current
+# =============================
+# COMPLIANCE ENGINE
+# =============================
+def compliance_check(drift, fairness, stability, jurisdiction):
+    messages = []
+
+    if "EU AI Act" in jurisdiction:
+        if drift > 0.2:
+            messages.append("⚠ EU AI Act: Data drift requires transparency report")
+        if fairness > 0.1:
+            messages.append("⚠ EU AI Act: Potential bias violation")
+
+    elif "SR 11-7" in jurisdiction:
+        if stability < 0.6:
+            messages.append("⚠ SR 11-7: Model validation failure risk")
+
+    elif "UK" in jurisdiction:
+        if drift > 0.3:
+            messages.append("⚠ UK Guidance: Model monitoring insufficient")
+
+    elif "APAC" in jurisdiction:
+        messages.append("ℹ APAC: General governance monitoring applied")
+
+    return messages
 # =============================
 # TRAIN + DASHBOARD + AI
 # =============================
-X_train, X_test, y_train, y_test = train_test_split(X, y)
+try:
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.3, random_state=42
+    )
+except:
+    st.error("Dataset split failed. Check data quality.")
+    st.stop()
 if st.button("Train Model"):
     from sklearn.ensemble import RandomForestClassifier
-    model = RandomForestClassifier()
+
+    model = RandomForestClassifier(n_estimators=100, random_state=42)
     model.fit(X_train, y_train)
+
     preds = model.predict(X_test)
+
     drift = compute_drift(X_train, X_test)
     fairness = compute_fairness(preds, y_test)
     stability = system_stability_score(drift, fairness)
+
     st.session_state.model = model
     st.session_state.metrics = (drift, fairness, stability)
+
     log_run("RandomForest", drift, fairness, stability, jurisdiction)
+
+    st.success("Model trained successfully")
 if st.session_state.metrics:
     drift, fairness, stability = st.session_state.metrics
+
     c1, c2, c3 = st.columns(3)
     c1.metric("Drift", drift, status_label(drift))
     c2.metric("Fairness", fairness, status_label(fairness))
     c3.metric("Stability", stability, status_label(1 - stability))
-    if st.button("Generate PDF"):
+
+    st.subheader("Compliance Signals")
+    msgs = compliance_check(drift, fairness, stability, jurisdiction)
+
+    for m in msgs:
+        st.warning(m)
+
+    # ✅ Only ONE PDF button
+    if st.button("Generate PDF Report"):
         path = generate_pdf_report(drift, fairness, stability)
         with open(path, "rb") as f:
-            st.download_button("Download", f, file_name="report.pdf")
-# =============================
-# SIMULATION
-# =============================
-if st.session_state.model and st.button("Start Simulation"):
-    chart = st.line_chart()
-    for step, current in simulate_stream(X_test):
-        preds = st.session_state.model.predict(current)
-        d = compute_drift(X_train, current)
-        f = compute_fairness(preds, y_test)
-        chart.add_rows({"Drift": [d], "Fairness": [f]})
+            st.download_button("Download Report", f, file_name="report.pdf")
+if st.session_state.model:
+    if st.button("Start System Simulation"):
+        chart = st.line_chart()
+
+        for step, current in simulate_system(X_test):
+            preds = st.session_state.model.predict(current)
+
+            d = compute_drift(X_train, current)
+            f = compute_fairness(preds, y_test)
+
+            chart.add_rows({"Drift": [d], "Fairness": [f]})
 # =============================
 # LOGS
 # =============================
@@ -366,26 +452,45 @@ logs = load_logs()
 if logs:
     st.dataframe(pd.DataFrame(logs))
 # =============================
-# AI ASSISTANT
+# ChatJTYYLSPH AI ASSISTANT
 # =============================
 api_key = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
-if api_key:
+
+if api_key and st.session_state.metrics:
     client = OpenAI(api_key=api_key)
+
     user_input = st.chat_input("Ask about your model")
+
     if user_input:
-        drift, fairness, stability = st.session_state.metrics or (0,0,0)
-        context = f"""
-        Drift: {drift}
-        Fairness: {fairness}
-        Stability: {stability}
-        """
+        drift, fairness, stability = st.session_state.metrics
+
+        # Save conversation
+        st.session_state.messages.append({"role": "user", "content": user_input})
+
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": context},
-                {"role": "user", "content": user_input}
-            ]
+                {
+                    "role": "system",
+                    "content": f"""
+                    You are an elite AI governance expert.
+                    Interpret risk, compliance, and model behavior.
+                    
+                    Drift: {drift}
+                    Fairness: {fairness}
+                    Stability: {stability}
+                    Jurisdiction: {jurisdiction}
+                    """
+                }
+            ] + st.session_state.messages
         )
-        st.write(response.choices[0].message.content)
 
+        reply = response.choices[0].message.content
+
+        st.session_state.messages.append({"role": "assistant", "content": reply})
+
+    # Display chat history
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]):
+            st.write(msg["content"])
 
