@@ -318,21 +318,39 @@ def prepare_features(df):
         st.error("Dataset must have at least 2 columns.")
         return None, None
 
+    # ✅ Flatten column names (handles MultiIndex)
+    df.columns = [str(col) for col in df.columns]
+
+    # ✅ Remove duplicate columns
+    df = df.loc[:, ~df.columns.duplicated()]
+
     target_col = st.sidebar.selectbox("Target Column", df.columns)
 
     X = df.drop(columns=[target_col]).copy()
     y = df[target_col].copy()
 
-    # Encode non-numeric
-    for col in X.select_dtypes(include="object"):
-        X[col] = LabelEncoder().fit_transform(X[col].astype(str))
+    # ✅ Ensure column names are strings
+    X.columns = [str(c) for c in X.columns]
 
-    # Fill missing
+    # ✅ Convert everything to numeric safely
+    for col in X.columns:
+        if X[col].dtype == "object":
+            try:
+                X[col] = pd.to_numeric(X[col])
+            except:
+                X[col] = LabelEncoder().fit_transform(X[col].astype(str))
+
+    # ✅ Handle infinities
+    X = X.replace([np.inf, -np.inf], np.nan)
+
+    # ✅ Fill missing values
     X = X.fillna(0)
-    y = y.fillna(0)
+    y = pd.to_numeric(y, errors="coerce").fillna(0)
+
+    # ✅ Final safety: ensure no weird dtypes
+    X = X.astype(float)
 
     return X, y
-
 
 X, y = prepare_features(df)
 
@@ -389,6 +407,8 @@ def compliance_check(drift, fairness, stability, jurisdiction):
 # =============================
 # TRAIN + DASHBOARD + AI
 # =============================
+st.write("Column Types:", X.dtypes)
+st.write("Any NaNs:", X.isna().sum().sum())
 try:
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.3, random_state=42
@@ -397,26 +417,27 @@ except:
     st.error("Dataset split failed. Check data quality.")
     st.stop()
 if st.button("Train Model"):
-    from sklearn.ensemble import RandomForestClassifier
+    try:
+        from sklearn.ensemble import RandomForestClassifier
 
-    model = RandomForestClassifier(n_estimators=100, random_state=42)
-    model.fit(X_train, y_train)
+        model = RandomForestClassifier(n_estimators=100, random_state=42)
+        model.fit(X_train, y_train)
 
-    preds = model.predict(X_test)
+        preds = model.predict(X_test)
 
-    drift = compute_drift(X_train, X_test)
-    fairness = compute_fairness(preds, y_test)
-    stability = system_stability_score(drift, fairness)
+        drift = compute_drift(X_train, X_test)
+        fairness = compute_fairness(preds, y_test)
+        stability = system_stability_score(drift, fairness)
 
-    st.session_state.model = model
-    st.session_state.metrics = (drift, fairness, stability)
+        st.session_state.model = model
+        st.session_state.metrics = (drift, fairness, stability)
 
-    log_run("RandomForest", drift, fairness, stability, jurisdiction)
+        log_run("RandomForest", drift, fairness, stability, jurisdiction)
 
-    st.success("Model trained successfully")
-if st.session_state.metrics:
-    drift, fairness, stability = st.session_state.metrics
+        st.success("Model trained successfully")
 
+    except Exception as e:
+        st.error(f"Training failed: {e}")
     c1, c2, c3 = st.columns(3)
     c1.metric("Drift", drift, status_label(drift))
     c2.metric("Fairness", fairness, status_label(fairness))
