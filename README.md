@@ -12,7 +12,7 @@ Real-Time Governance Infrastructure for Production AI Systems
 ## 🚀 Live Demo
 
 Streamlit App:  
-(https://ai-governance-platform-jtyylsph.streamlit.app/)
+[([https://ai-governance-platform-jtyylsph.streamlit.app/](https://ai-aurexis-governance-platform.streamlit.app/)](https://ai-aurexis-governance-platform.streamlit.app/)
 
 ---
 
