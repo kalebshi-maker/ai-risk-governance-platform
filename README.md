@@ -18,7 +18,7 @@ Streamlit App:
 
 ## 📂 Repository
 
-GitHub:  (https://github.com/kalebshi-maker/ai-risk-governance-platform/tree/main](https://github.com/kalebshi-maker/ai-risk-governance-platform)
+GitHub:  ([https://github.com/kalebshi-maker/ai-risk-governance-platform/tree/main](https://github.com/kalebshi-maker/ai-risk-governance-platform](https://github.com/kalebshi-maker/ai-risk-governance-platform/tree/main))
 
 ---
 
