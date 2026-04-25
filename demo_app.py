@@ -81,14 +81,30 @@ if 0.3 < stability <= 0.4:
 # FAILURE MOMENT (IMPACT)
 # -------------------------
 if status == "🔴 FAILURE":
+    # 1. Inject CSS for a red flashing background and a text glitch animation
+    st.markdown("""
+        <style>
+        [data-testid="stAppViewContainer"] { animation: pulse-red 0.5s infinite; }
+        @keyframes pulse-red {
+            0%, 100% { background-color: rgba(255, 0, 0, 0); }
+            50% { background-color: rgba(255, 0, 0, 0.2); }
+        }
+        .glitch {
+            font-size: 50px; font-weight: bold; color: red; text-align: center;
+            text-shadow: 0.05em 0 0 #00fffc, -0.03em -0.04em 0 #fc00ff;
+            animation: glitch 725ms infinite;
+        }
+        @keyframes glitch {
+            0%, 100% { text-shadow: 0.05em 0 0 #00fffc, -0.03em -0.04em 0 #fc00ff; }
+            50% { text-shadow: -0.05em -0.025em 0 #00fffc, 0.025em 0.035em 0 #fc00ff; }
+        }
+        </style>
+        """, unsafe_allow_html=True)
+
+    # 2. Display the animated message and play the audio
+    st.markdown('<p class="glitch">🚨 AI HAS LOST CONTROL 🚨</p>', unsafe_allow_html=True)
     st.error("⚠️ SYSTEM FAILURE: Model is no longer reliable")
-    st.markdown(
-        "<h2 style='text-align:center; color:red;'>🚨 AI HAS LOST CONTROL 🚨</h2>",
-        unsafe_allow_html=True
-    )
-    # Optional sound effect
-    # High-stakes sci-fi alarm siren
-    st.audio("https://gfxsounds.com/wp-content/uploads/2022/12/Futuristic-alarm-or-warning-loopable-2.mp3", autoplay=True)
+    st.audio("https://gfxsounds.com", autoplay=True)
 # -------------------------
 # SCORE (GAMIFIED)
 # -------------------------
