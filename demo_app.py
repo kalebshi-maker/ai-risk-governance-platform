@@ -1,4 +1,3 @@
-
 import streamlit as st
 import numpy as np
 import pandas as pd
@@ -95,17 +94,25 @@ if status == "🔴 FAILURE":
             animation: glitch 725ms infinite;
         }
         @keyframes glitch {
-            0%, 100% { text-shadow: 0.05em 0 0 #00fffc, -0.03em -0.04em 0 #fc00ff; }
-            50% { text-shadow: -0.05em -0.025em 0 #00fffc, 0.025em 0.035em 0 #fc00ff; }
+            0% { transform: translate(0); }
+            20% { transform: translate(-2px, 2px); }
+            40% { transform: translate(-2px, -2px); }
+            60% { transform: translate(2px, 2px); }
+            80% { transform: translate(2px, -2px); }
+            100% { transform: translate(0); }
         }
         </style>
         """, unsafe_allow_html=True)
 
-    # 2. Display the animated message and play the audio
+    # 2. Display the animated message
     st.markdown('<p class="glitch">🚨 AI HAS LOST CONTROL 🚨</p>', unsafe_allow_html=True)
     st.error("⚠️ SYSTEM FAILURE: Model is no longer reliable")
-    st.audio("https://gfxsounds.com/wp-content/uploads/2022/22/Futuristic-alarm-or-warning-loopable-2.mp3", autoplay=True)
- 
+
+    # 3. Audio (Ensure this is indented exactly like the lines above!)
+    # Using a high-reliability link from a different source
+    audio_url = "https://soundjay.com"
+    st.audio(audio_url, format="audio/mp3", autoplay=True)
+
 # -------------------------
 # SCORE (GAMIFIED)
 # -------------------------
