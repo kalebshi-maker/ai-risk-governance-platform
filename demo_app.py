@@ -2,41 +2,49 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 
-# MUST be first Streamlit command
 st.set_page_config(layout="wide")
+
+# -------------------------
+# SESSION STATE (CRITICAL)
+# -------------------------
+if "drift" not in st.session_state:
+    st.session_state.drift = 0.0
+
+if "fairness" not in st.session_state:
+    st.session_state.fairness = 0.0
 
 # -------------------------
 # TITLE
 # -------------------------
 st.markdown(
-    """
-    <h1 style='text-align: center; font-size: 48px;'>
-    🚨 Can You Break This AI Model?
-    </h1>
-    """,
+    "<h1 style='text-align: center; font-size: 42px;'>🚨 Break This AI Model</h1>",
     unsafe_allow_html=True
 )
 
 # -------------------------
-# USER CONTROL
+# BUTTON CONTROLS (MOBILE FRIENDLY)
 # -------------------------
-drift_level = st.slider("Increase Data Drift", 0.0, 1.0, 0.0, 0.05)
-inject_bias = st.button("Inject Bias")
+col1, col2 = st.columns(2)
+
+if col1.button("⬆️ Add Drift"):
+    st.session_state.drift = min(1.0, st.session_state.drift + 0.15)
+
+if col2.button("⚠️ Add Bias"):
+    st.session_state.fairness = min(1.0, st.session_state.fairness + np.random.uniform(0.15, 0.3))
+
+# Reset button (important for repeating demo)
+if st.button("🔄 Reset"):
+    st.session_state.drift = 0.0
+    st.session_state.fairness = 0.0
+
+drift = st.session_state.drift
+fairness = st.session_state.fairness
 
 # -------------------------
-# SIMULATION
+# SYSTEM LOGIC
 # -------------------------
-drift = drift_level
-fairness = 0.0
-
-if inject_bias:
-    fairness = np.random.uniform(0.2, 0.5)
-
 stability = max(0, 1 - (drift * 0.6 + fairness * 0.4))
 
-# -------------------------
-# STATUS LOGIC
-# -------------------------
 def get_status(value):
     if value > 0.7:
         return "🟢 STABLE"
@@ -46,24 +54,39 @@ def get_status(value):
         return "🔴 FAILURE"
 
 status = get_status(stability)
+if status == "🔴 FAILURE":
+    st.error("⚠️ SYSTEM FAILURE: Model is no longer reliable")
+# -------------------------
+# DISPLAY (BIG + CLEAN)
+# -------------------------
+c1, c2, c3 = st.columns(3)
+
+c1.metric("Drift", round(drift, 2))
+c2.metric("Bias Risk", round(fairness, 2))
+c3.metric("Stability", round(stability, 2))
+
+st.markdown(
+    f"<h1 style='text-align: center; font-size: 50px;'>{status}</h1>",
+    unsafe_allow_html=True
+)
 
 # -------------------------
-# DISPLAY
+# CHART HISTORY (THIS MAKES IT FEEL REAL)
 # -------------------------
-col1, col2, col3 = st.columns(3)
+if "history" not in st.session_state:
+    st.session_state.history = []
 
-col1.metric("Drift", round(drift, 2))
-col2.metric("Fairness Risk", round(fairness, 2))
-col3.metric("Stability", round(stability, 2))
-
-st.markdown(f"<h1 style='text-align: center;'>{status}</h1>", unsafe_allow_html=True)
-
-# -------------------------
-# LIVE CHART
-# -------------------------
-chart_data = pd.DataFrame({
-    "Drift": [drift],
-    "Fairness": [fairness],
+st.session_state.history.append({
+    "Drift": drift,
+    "Bias": fairness,
+    "Stability": stability
 })
 
-st.line_chart(chart_data)
+df = pd.DataFrame(st.session_state.history)
+
+st.line_chart(df)
+
+# -------------------------
+# AUTO SCROLL FEEL
+# -------------------------
+st.caption("👉 Keep clicking to break the system")
