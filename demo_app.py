@@ -1,3 +1,4 @@
+https://ai-risk-governance-platform-fpdg6w5kn8qkt4tn8x5xzc.streamlit.app/
 
 import streamlit as st
 import numpy as np
@@ -111,7 +112,7 @@ if status == "🔴 FAILURE":
 
     # 3. Audio (Ensure this is indented exactly like the lines above!)
     # Using a high-reliability link from a different source
-    audio_url = "https://youtu.be/s3VXZR5tgSg"
+    audio_url = "https://gfxsounds.com/wp-content/uploads/2022/12/Futuristic-alarm-or-warning-loopable-2.mp3"
     st.audio(audio_url, format="audio/mp3", autoplay=True)
 # -------------------------
 # SCORE (GAMIFIED)
