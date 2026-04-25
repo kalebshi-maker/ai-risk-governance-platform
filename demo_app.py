@@ -104,7 +104,8 @@ if status == "🔴 FAILURE":
     # 2. Display the animated message and play the audio
     st.markdown('<p class="glitch">🚨 AI HAS LOST CONTROL 🚨</p>', unsafe_allow_html=True)
     st.error("⚠️ SYSTEM FAILURE: Model is no longer reliable")
-    st.audio("https://pixabay.com", autoplay=True)
+st.audio("https://gfxsounds.com/wp-content/uploads/2022/12/Futuristic-alarm-or-warning-loopable-2.mp3", autoplay=True)
+
 # -------------------------
 # SCORE (GAMIFIED)
 # -------------------------
