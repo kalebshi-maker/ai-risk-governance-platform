@@ -1,3 +1,5 @@
+https://ai-risk-governance-platform-fpdg6w5kn8qkt4tn8x5xzc.streamlit.app/
+
 import streamlit as st
 import numpy as np
 import pandas as pd
@@ -86,8 +88,8 @@ if status == "🔴 FAILURE":
         unsafe_allow_html=True
     )
     # Optional sound effect
-    st.audio("https://www.soundjay.com/buttons/beep-07.wav")
-
+    # High-stakes sci-fi alarm siren
+    st.audio("https://gfxsounds.com/wp-content/uploads/2022/12/Futuristic-alarm-or-warning-loopable-2.mp3", autoplay=True)
 # -------------------------
 # SCORE (GAMIFIED)
 # -------------------------
