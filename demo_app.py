@@ -13,11 +13,19 @@ if "drift" not in st.session_state:
 if "fairness" not in st.session_state:
     st.session_state.fairness = 0.0
 
+if "history" not in st.session_state:
+    st.session_state.history = []
+
 # -------------------------
 # TITLE
 # -------------------------
 st.markdown(
     "<h1 style='text-align: center; font-size: 42px;'>🚨 Break This AI Model</h1>",
+    unsafe_allow_html=True
+)
+
+st.markdown(
+    "<h3 style='text-align:center;'>🎯 Goal: Push the system into FAILURE</h3>",
     unsafe_allow_html=True
 )
 
@@ -27,15 +35,22 @@ st.markdown(
 col1, col2 = st.columns(2)
 
 if col1.button("⬆️ Add Drift"):
-    st.session_state.drift = min(1.0, st.session_state.drift + 0.15)
+    st.session_state.drift = min(
+        1.0,
+        st.session_state.drift + np.random.uniform(0.08, 0.15)  # smoother escalation
+    )
 
 if col2.button("⚠️ Add Bias"):
-    st.session_state.fairness = min(1.0, st.session_state.fairness + np.random.uniform(0.15, 0.3))
+    st.session_state.fairness = min(
+        1.0,
+        st.session_state.fairness + np.random.uniform(0.15, 0.3)
+    )
 
-# Reset button (important for repeating demo)
+# Reset button (FULL reset)
 if st.button("🔄 Reset"):
     st.session_state.drift = 0.0
     st.session_state.fairness = 0.0
+    st.session_state.history = []
 
 drift = st.session_state.drift
 fairness = st.session_state.fairness
@@ -54,8 +69,34 @@ def get_status(value):
         return "🔴 FAILURE"
 
 status = get_status(stability)
+
+# -------------------------
+# PRE-FAILURE TENSION
+# -------------------------
+if 0.3 < stability <= 0.4:
+    st.warning("⚠️ System nearing critical instability...")
+
+# -------------------------
+# FAILURE MOMENT (IMPACT)
+# -------------------------
 if status == "🔴 FAILURE":
     st.error("⚠️ SYSTEM FAILURE: Model is no longer reliable")
+    st.markdown(
+        "<h2 style='text-align:center; color:red;'>🚨 AI HAS LOST CONTROL 🚨</h2>",
+        unsafe_allow_html=True
+    )
+    # Optional sound effect
+    st.audio("https://www.soundjay.com/buttons/beep-07.wav")
+
+# -------------------------
+# SCORE (GAMIFIED)
+# -------------------------
+score = int((drift**1.2 + fairness**1.2) * 60)
+st.markdown(
+    f"<h3 style='text-align:center;'>🏆 Score: {score}</h3>",
+    unsafe_allow_html=True
+)
+
 # -------------------------
 # DISPLAY (BIG + CLEAN)
 # -------------------------
@@ -65,28 +106,32 @@ c1.metric("Drift", round(drift, 2))
 c2.metric("Bias Risk", round(fairness, 2))
 c3.metric("Stability", round(stability, 2))
 
+# Better progress logic (intuitive)
+st.progress(min(1.0, drift + fairness))
+
 st.markdown(
     f"<h1 style='text-align: center; font-size: 50px;'>{status}</h1>",
     unsafe_allow_html=True
 )
 
 # -------------------------
-# CHART HISTORY (THIS MAKES IT FEEL REAL)
+# CHART HISTORY (REAL FEEL)
 # -------------------------
-if "history" not in st.session_state:
-    st.session_state.history = []
-
 st.session_state.history.append({
     "Drift": drift,
     "Bias": fairness,
     "Stability": stability
 })
 
+# Keep only last 20 points
+st.session_state.history = st.session_state.history[-20:]
+
 df = pd.DataFrame(st.session_state.history)
 
 st.line_chart(df)
 
 # -------------------------
-# AUTO SCROLL FEEL
+# FINAL CONTEXT LINE
 # -------------------------
+st.caption("💡 This is what happens in real AI systems — silently.")
 st.caption("👉 Keep clicking to break the system")
