@@ -111,7 +111,7 @@ if status == "🔴 FAILURE":
 
     # 3. Audio (Ensure this is indented exactly like the lines above!)
     # Using a high-reliability link from a different source
-    audio_url = "https://gfxsounds.com/wp-content/uploads/2022/12/Futuristic-alarm-or-warning-loopable-2.mp3"
+    audio_url = "https://youtu.be/s3VXZR5tgSg"
     st.audio(audio_url, format="audio/mp3", autoplay=True)
 # -------------------------
 # SCORE (GAMIFIED)
