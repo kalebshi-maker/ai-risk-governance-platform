@@ -1,3 +1,4 @@
+
 import streamlit as st
 import numpy as np
 import pandas as pd
@@ -110,9 +111,8 @@ if status == "🔴 FAILURE":
 
     # 3. Audio (Ensure this is indented exactly like the lines above!)
     # Using a high-reliability link from a different source
-    audio_url = "https://soundjay.com"
+    audio_url = "https://gfxsounds.com/wp-content/uploads/2022/12/Futuristic-alarm-or-warning-loopable-2.mp3"
     st.audio(audio_url, format="audio/mp3", autoplay=True)
-
 # -------------------------
 # SCORE (GAMIFIED)
 # -------------------------
