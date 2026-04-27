@@ -1,4 +1,3 @@
-https://ai-risk-governance-platform-fpdg6w5kn8qkt4tn8x5xzc.streamlit.app/
 
 import streamlit as st
 import numpy as np
