@@ -15,6 +15,7 @@ from scipy.stats import wasserstein_distance
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
 from openai import OpenAI
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 # =============================
 # CONSTANTS
 # =============================
@@ -418,26 +419,21 @@ except:
     st.stop()
 if st.button("Train Model"):
     try:
-        from sklearn.ensemble import RandomForestClassifier
-
-        model = RandomForestClassifier(n_estimators=100, random_state=42)
         model.fit(X_train, y_train)
-
         preds = model.predict(X_test)
-
         drift = compute_drift(X_train, X_test)
+def compute_fairness(preds, y_true):
+        return abs(np.mean(preds) - np.mean(y_true))
         fairness = compute_fairness(preds, y_test)
         stability = system_stability_score(drift, fairness)
-
-        st.session_state.model = model
         st.session_state.metrics = (drift, fairness, stability)
-
-        log_run("RandomForest", drift, fairness, stability, jurisdiction)
-
-        st.success("Model trained successfully")
+if st.session_state.metrics:
+    drift, fairness, stability = st.session_state.metrics
+    c1.metric("Drift", drift, status_label(drift))
 
     except Exception as e:
         st.error(f"Training failed: {e}")
+        st.stop()
     c1, c2, c3 = st.columns(3)
     c1.metric("Drift", drift, status_label(drift))
     c2.metric("Fairness", fairness, status_label(fairness))
@@ -465,6 +461,16 @@ if st.session_state.model:
             f = compute_fairness(preds, y_test)
 
             chart.add_rows({"Drift": [d], "Fairness": [f]})
+def detect_task(y):
+    if y.nunique() < 10:
+        return "classification"
+    return "regression"
+task = detect_task(y)
+if task == "classification":
+    model = RandomForestClassifier()
+else:
+    model = RandomForestRegressor()
+
 # =============================
 # LOGS
 # =============================
@@ -514,5 +520,5 @@ if api_key and st.session_state.metrics:
     # Display chat history
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
-            st.write(msg["content"]) 
+            st.write(msg["content"])
 
