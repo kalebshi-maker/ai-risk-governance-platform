@@ -422,8 +422,6 @@ if st.button("Train Model"):
         model.fit(X_train, y_train)
         preds = model.predict(X_test)
         drift = compute_drift(X_train, X_test)
-def compute_fairness(preds, y_true):
-        return abs(np.mean(preds) - np.mean(y_true))
         fairness = compute_fairness(preds, y_test)
         stability = system_stability_score(drift, fairness)
         st.session_state.metrics = (drift, fairness, stability)
