@@ -1,3 +1,10 @@
+"""
+Aurexis Systems — AI Governance Infrastructure
+
+Establishing rules and timing is like setting up a formation for the Qimen Dunjia,
+and creating a holographic AI linked to the Earth system to simulate the operation
+status and laws of celestial bodies.
+"""
 # =============================
 # 🚀 Aurexis Systems — AI Governance Infrastructure for Enterprise-Scale Systems
 # =============================
@@ -360,6 +367,22 @@ if X is None:
 # =============================
 # SYSTEM SIMULATION
 # =============================
+# =============================
+# SYSTEM SIMULATION
+# =============================
+def simulate_system(X_test, steps=30):
+    current = X_test.copy().astype(float)
+
+    for t in range(steps):
+        phase = np.sin(t / 5)
+        noise = np.random.normal(0, 0.05, current.shape)
+        drift_vector = phase * 0.01
+
+        current = current + noise + drift_vector
+        current = current.fillna(0)
+
+        yield t, current
+
 if st.session_state.model and st.session_state.metrics:
 
     if st.button("🌀 Start System Simulation"):
