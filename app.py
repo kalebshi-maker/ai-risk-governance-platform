@@ -358,29 +358,28 @@ X, y = prepare_features(df)
 if X is None:
     st.stop()
 # =============================
-# DYNAMIC SYSTEM SIMULATION
+# SYSTEM SIMULATION
 # =============================
-def simulate_system(X_test, steps=30):
-    current = X_test.copy().astype(float)
+if st.session_state.model and st.session_state.metrics:
 
-    for t in range(steps):
-        try:
-            # cyclical drift (like orbital mechanics)
-            phase = np.sin(t / 5)
+    if st.button("🌀 Start System Simulation"):
+        chart = st.line_chart()
 
-            noise = np.random.normal(0, 0.02 + abs(phase)*0.05, current.shape)
+        X_train, X_test, y_train, y_test = st.session_state.data_split
+        model = st.session_state.model
 
-            # directional drift (system bias evolution)
-            drift_vector = phase * 0.01
+        for step, current in simulate_system(X_test):
 
-            current = current + noise + drift_vector
-            current = current.fillna(0)
+            preds = model.predict(current)
 
-            yield t, current
+            d = compute_drift(X_train, current)
+            f = compute_fairness(preds, y_test)
 
-            time.sleep(0.15)
-        except:
-            yield t, current
+            chart.add_rows({
+                "Drift": [d],
+                "Fairness": [f]
+            })
+
 # =============================
 # COMPLIANCE ENGINE
 # =============================
@@ -403,71 +402,82 @@ def compliance_check(drift, fairness, stability, jurisdiction):
 
     elif "APAC" in jurisdiction:
         messages.append("ℹ APAC: General governance monitoring applied")
-
+ 
     return messages
 # =============================
-# TRAIN + DASHBOARD + AI
+# TASK DETECTION
 # =============================
-st.write("Column Types:", X.dtypes)
-st.write("Any NaNs:", X.isna().sum().sum())
-try:
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.3, random_state=42
-    )
-except:
-    st.error("Dataset split failed. Check data quality.")
-    st.stop()
-if st.button("Train Model"):
-    try:
-        model.fit(X_train, y_train)
-        preds = model.predict(X_test)
-        drift = compute_drift(X_train, X_test)
-        fairness = compute_fairness(preds, y_test)
-        stability = system_stability_score(drift, fairness)
-        st.session_state.metrics = (drift, fairness, stability)
-if st.session_state.metrics:
-    drift, fairness, stability = st.session_state.metrics
-    c1.metric("Drift", drift, status_label(drift))
-
-    except Exception as e:
-        st.error(f"Training failed: {e}")
-        st.stop()
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Drift", drift, status_label(drift))
-    c2.metric("Fairness", fairness, status_label(fairness))
-    c3.metric("Stability", stability, status_label(1 - stability))
-
-    st.subheader("Compliance Signals")
-    msgs = compliance_check(drift, fairness, stability, jurisdiction)
-
-    for m in msgs:
-        st.warning(m)
-
-    # ✅ Only ONE PDF button
-    if st.button("Generate PDF Report"):
-        path = generate_pdf_report(drift, fairness, stability)
-        with open(path, "rb") as f:
-            st.download_button("Download Report", f, file_name="report.pdf")
-if st.session_state.model:
-    if st.button("Start System Simulation"):
-        chart = st.line_chart()
-
-        for step, current in simulate_system(X_test):
-            preds = st.session_state.model.predict(current)
-
-            d = compute_drift(X_train, current)
-            f = compute_fairness(preds, y_test)
-
-            chart.add_rows({"Drift": [d], "Fairness": [f]})
 def detect_task(y):
-    if y.nunique() < 10:
-        return "classification"
-    return "regression"
+    return "classification" if y.nunique() < 10 else "regression"
+
 task = detect_task(y)
+
+# =============================
+# MODEL INIT
+# =============================
 if task == "classification":
     model = RandomForestClassifier()
 else:
     model = RandomForestRegressor()
+
+# =============================
+# FAIRNESS
+# =============================
+def compute_fairness(preds, y_true):
+    try:
+        return float(abs(np.mean(preds) - np.mean(y_true)))
+    except:
+        return 0.0
+
+# =============================
+# TRAIN BUTTON
+# =============================
+if st.button("🚀 Train Model"):
+    try:
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.3, random_state=42
+        )
+
+        model.fit(X_train, y_train)
+        preds = model.predict(X_test)
+
+        drift = compute_drift(X_train, X_test)
+        fairness = compute_fairness(preds, y_test)
+        stability = system_stability_score(drift, fairness)
+
+        # Save to session
+        st.session_state.model = model
+        st.session_state.metrics = (drift, fairness, stability)
+        st.session_state.data_split = (X_train, X_test, y_train, y_test)
+
+        st.success("Model trained successfully")
+
+    except Exception as e:
+        st.error(f"Training failed: {e}")
+        st.stop()
+
+# =============================
+# METRICS DISPLAY
+# =============================
+if st.session_state.metrics:
+    drift, fairness, stability = st.session_state.metrics
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Drift", round(drift, 3))
+    c2.metric("Fairness", round(fairness, 3))
+    c3.metric("Stability", round(stability, 3))
+
+    # Compliance
+    st.subheader("Compliance Signals")
+    msgs = compliance_check(drift, fairness, stability, jurisdiction)
+    for m in msgs:
+        st.warning(m)
+
+    # PDF
+    if st.button("📄 Generate PDF Report"):
+        path = generate_pdf_report(drift, fairness, stability)
+        with open(path, "rb") as f:
+            st.download_button("Download Report", f, file_name="report.pdf")
 
 # =============================
 # LOGS
