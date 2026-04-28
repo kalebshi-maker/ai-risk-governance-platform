@@ -1,3 +1,4 @@
+Establishing rules and timing is like setting up a formation for the Qimen Dunjia, and creating a holographic AI linked to the Earth system to simulate the operation status and laws of celestial bodies
 # =============================
 # 🚀 Aurexis Systems — AI Governance Infrastructure for Enterprise-Scale Systems
 # =============================
@@ -379,7 +380,6 @@ if st.session_state.model and st.session_state.metrics:
                 "Drift": [d],
                 "Fairness": [f]
             })
-
 # =============================
 # COMPLIANCE ENGINE
 # =============================
@@ -487,46 +487,66 @@ logs = load_logs()
 if logs:
     st.dataframe(pd.DataFrame(logs))
 # =============================
-# ChatAS AI ASSISTANT
+# Aurexis Systems AI ASSISTANT
 # =============================
+from openai import OpenAI
+
 api_key = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
-st.write("DEBUG: API key exists?", bool(api_key))
-st.write("DEBUG: Key preview:", api_key[:7] if api_key else "None")
-if api_key and st.session_state.metrics:
-    client = OpenAI(api_key=api_key)
+
+if not api_key:
+    st.error("No OpenAI API key found")
+    st.stop()
+
+client = OpenAI(api_key=api_key)
+
+# =============================
+# CHAT
+# =============================
+if st.session_state.metrics:
 
     user_input = st.chat_input("Ask about your model")
 
     if user_input:
         drift, fairness, stability = st.session_state.metrics
 
-        # Save conversation
-        st.session_state.messages.append({"role": "user", "content": user_input})
+        st.session_state.messages.append({
+            "role": "user",
+            "content": user_input
+        })
 
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": f"""
-                    You are an elite AI governance expert.
-                    Interpret risk, compliance, and model behavior.
-                    
-                    Drift: {drift}
-                    Fairness: {fairness}
-                    Stability: {stability}
-                    Jurisdiction: {jurisdiction}
-                    """
-                }
-            ] + st.session_state.messages
-        )
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": f"""
+You are an elite AI governance expert.
 
-        reply = response.choices[0].message.content
+Analyze:
+- Drift: {drift}
+- Fairness: {fairness}
+- Stability: {stability}
+- Jurisdiction: {jurisdiction}
+"""
+                    },
+                    *st.session_state.messages
+                ]
+            )
 
-        st.session_state.messages.append({"role": "assistant", "content": reply})
+            reply = response.choices[0].message.content
 
-    # Display chat history
-    for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
-            st.write(msg["content"])
+        except Exception as e:
+            st.error(f"OpenAI API Error: {e}")
+            st.stop()
+
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": reply
+        })
+
+# Display chat
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.write(msg["content"])
 
