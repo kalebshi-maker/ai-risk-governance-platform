@@ -20,6 +20,7 @@ from scipy.stats import wasserstein_distance, entropy as scipy_entropy
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib import colors
+from openai import OpenAI  # FIX #1: MISSING IMPORT
 
 # =============================
 # PAGE CONFIG (MUST BE FIRST)
@@ -514,3 +515,90 @@ if logs:
     st.dataframe(log_df, use_container_width=True)
 else:
     st.info("No audit entries yet. Train a model to generate logs.")
+
+# =============================
+# AUREXIS AI ASSISTANT
+# FIX #1: Added missing `from openai import OpenAI` at top
+# FIX #2: Rebuilt OpenAI API call block completely
+# FIX #3: Added proper error handling for missing API key
+# FIX #4: Only show chat if metrics exist
+# FIX #5: Fixed chat message display ordering
+# =============================
+
+# FIX #3: Check API key early with clear error message
+api_key = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
+
+if not api_key:
+    st.warning("⚠️ **OpenAI API Key Missing**\n\nTo enable AI Assistant:\n1. Set `OPENAI_API_KEY` in `.streamlit/secrets.toml`\n2. Or set `OPENAI_API_KEY` environment variable\n3. Restart the Streamlit app")
+else:
+    # Only show AI assistant if we have metrics and API key
+    if st.session_state.metrics:
+        st.subheader("🤖 Aurexis AI Assistant")
+        
+        drift, fairness, stability = st.session_state.metrics
+        risk_score = st.session_state.risk_score or 0.0
+        
+        # Initialize chat client
+        client = OpenAI(api_key=api_key)
+        
+        # Display chat history
+        for msg in st.session_state.messages:
+            with st.chat_message(msg["role"]):
+                st.write(msg["content"])
+        
+        # Chat input
+        user_input = st.chat_input("Ask about your model governance...")
+        
+        if user_input:
+            # Add user message to history
+            st.session_state.messages.append({
+                "role": "user",
+                "content": user_input
+            })
+            
+            # Display user message immediately
+            with st.chat_message("user"):
+                st.write(user_input)
+            
+            try:
+                # FIX #2: Correct, complete OpenAI API call with proper parameters
+                with st.spinner("🔄 AI is analyzing your governance metrics..."):
+                    response = client.chat.completions.create(
+                        model="gpt-4o-mini",  # Reliable model
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": (
+                                    f"You are an elite AI governance expert analyzing model compliance.\n\n"
+                                    f"**Current Metrics:**\n"
+                                    f"- Drift Score: {drift:.3f}\n"
+                                    f"- Fairness Gap: {fairness:.3f}\n"
+                                    f"- System Stability: {stability:.3f}\n"
+                                    f"- Risk Score: {risk_score:.3f}\n"
+                                    f"- Regulatory Jurisdiction: {jurisdiction}\n\n"
+                                    f"Provide concise, actionable governance insights."
+                                )
+                            },
+                            *st.session_state.messages
+                        ],
+                        temperature=0.2,
+                        max_tokens=500,
+                        top_p=0.9
+                    )
+                
+                reply = response.choices[0].message.content
+                
+                # Add assistant response to history
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": reply
+                })
+                
+                # Display assistant response
+                with st.chat_message("assistant"):
+                    st.write(reply)
+            
+            except Exception as e:
+                st.error(f"❌ OpenAI API Error: {str(e)}\n\nPlease check your API key and try again.")
+    else:
+        st.info("ℹ️ Train a model first to enable the AI Assistant.")
