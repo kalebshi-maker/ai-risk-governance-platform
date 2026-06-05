@@ -6,3 +6,4 @@ scipy
 reportlab
 openai
 sqlalchemy
+psycopg2-binary
