@@ -7,6 +7,5 @@ reportlab
 openai
 sqlalchemy
 psycopg2-binary
-fastapi
 uvicorn
-
+fastapi==0.136.3
