@@ -12,7 +12,8 @@ Real-Time Governance Infrastructure for Production AI Systems
 ## 🚀 Live Demo
 
 Streamlit App:  
-([[https://ai-governance-platform-jtyylsph.streamlit.app/](https://ai-aurexis-governance-platform.streamlit.app/)](https://ai-aurexis-governance-platform.streamlit.app/](https://github.com/kalebshi-maker/ai-risk-governance-platform/blob/main/README.md))
+(https://ai-governance-platform-jtyylsph.streamlit.app/
+https://ai-aurexis-governance-platform.streamlit.app/)
 
 ---
 
