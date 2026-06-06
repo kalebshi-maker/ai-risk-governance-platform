@@ -7,3 +7,6 @@ reportlab
 openai
 sqlalchemy
 psycopg2-binary
+fastapi
+uvicorn
+redis
