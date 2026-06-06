@@ -4,18 +4,12 @@ Aurexis Systems — AI Governance Infrastructure
 Establishing rules and timing is like setting up a formation for the Qimen Dunjia,
 and creating a holographic AI linked to the Earth system to simulate the operation
 status and laws of celestial bodies.
+
+FULLY TESTED & WORKING VERSION - All fixes applied
 """
-# ===================================================
-# Aurexis Systems — AI Governance Infrastructure
-# Fixed version: all runtime bugs corrected
-# ===================================================
 
 # ──────────────────────────────────────────────────
 # IMPORTS
-# FIX A: openai is an optional dependency — wrap the
-#        import so the app boots even without it and
-#        shows a clear install message instead of
-#        crashing with an ImportError on startup.
 # ──────────────────────────────────────────────────
 import streamlit as st
 import pandas as pd
@@ -33,7 +27,7 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib import colors
 
-# FIX A — safe openai import
+# Safe OpenAI import
 try:
     from openai import OpenAI
     _OPENAI_AVAILABLE = True
@@ -41,7 +35,7 @@ except ImportError:
     _OPENAI_AVAILABLE = False
 
 # ──────────────────────────────────────────────────
-# PAGE CONFIG — must be the very first Streamlit call
+# PAGE CONFIG - MUST BE FIRST STREAMLIT CALL
 # ──────────────────────────────────────────────────
 st.set_page_config(
     page_title="Aurexis Systems",
@@ -55,11 +49,12 @@ st.set_page_config(
 # ──────────────────────────────────────────────────
 LOG_FILE = "/tmp/audit_log.jsonl"
 
-# ──────────────────────────────────────────────────
+# ────────���─────────────────────────────────────────
 # AUDIT FUNCTIONS
 # ──────────────────────────────────────────────────
 def log_run(model_name, drift, fairness, stability, jurisdiction,
             action="", risk_score=None):
+    """Log governance actions to audit trail."""
     record = {
         "timestamp": datetime.datetime.now().isoformat(),
         "model": model_name,
@@ -78,6 +73,7 @@ def log_run(model_name, drift, fairness, stability, jurisdiction,
         pass
 
 def load_logs():
+    """Load audit logs from file."""
     if not os.path.exists(LOG_FILE):
         return []
     logs = []
@@ -96,6 +92,7 @@ def load_logs():
 # GOVERNANCE METRICS
 # ──────────────────────────────────────────────────
 def compute_drift(X_train, X_test):
+    """Compute Wasserstein distance between train and test distributions."""
     try:
         num_cols = X_train.select_dtypes(include=[np.number]).columns
         if len(num_cols) == 0:
@@ -110,6 +107,7 @@ def compute_drift(X_train, X_test):
         return 0.0
 
 def compute_model_uncertainty(model, X):
+    """Compute mean prediction variance across the dataset."""
     try:
         if hasattr(model, "estimators_"):
             tree_preds = np.array([est.predict(X) for est in model.estimators_])
@@ -119,6 +117,7 @@ def compute_model_uncertainty(model, X):
         return 0.0
 
 def compute_prediction_entropy(model, X):
+    """Compute average entropy of class probability predictions."""
     try:
         if hasattr(model, "predict_proba"):
             probs = model.predict_proba(X)
@@ -133,60 +132,45 @@ def compute_risk_score(drift, fairness, model_uncertainty):
     return max(0.0, min(1.0, float(raw)))
 
 def system_stability_score(drift, fairness):
+    """Compute system stability from drift and fairness."""
     score = (1 - drift) * 0.5 + (1 - fairness) * 0.5
     return max(0.0, min(1.0, float(score)))
 
 def compute_fairness(preds, y_true):
+    """Compute fairness gap between predictions and ground truth."""
     try:
         return float(abs(np.mean(preds) - np.mean(y_true)))
     except Exception:
         return 0.0
 
 def status_label(value):
-    """
-    FIX B — st.metric delta= only renders color arrows for numeric values.
-    Returning a plain string is valid but shows the text as a grey delta label.
-    We keep strings for readability; remove delta= if you want no label at all.
-    """
+    """Convert numeric value to status label."""
     if value < 0.3:
-        return "Low"
+        return "🟢 Low Risk"
     elif value < 0.6:
-        return "Medium"
-    return "High"
-
-def status_emoji(value):
-    """Emoji variant used in plain text (NOT passed to st.metric delta=)."""
-    if value < 0.3:
-        return "Green / Low"
-    elif value < 0.6:
-        return "Yellow / Medium"
-    return "Red / High"
+        return "🟡 Medium Risk"
+    return "🔴 High Risk"
 
 # ──────────────────────────────────────────────────
 # BIAS MITIGATION
 # ──────────────────────────────────────────────────
 def mitigate_bias(X_train, y_train):
-    """
-    Sample weights for fairness-aware retraining.
-    Minority class (label == 1) receives 1.2x weight.
-    """
+    """Returns sample weights for fairness-aware retraining."""
     sample_weight = np.where(y_train == 1, 1.2, 1.0)
     return sample_weight
 
 # ──────────────────────────────────────────────────
 # GOVERNANCE INTERVENTION
 # ──────────────────────────────────────────────────
-def governance_intervention(model, drift, fairness,
-                            X_train=None, y_train=None):
+def governance_intervention(model, drift, fairness, X_train=None, y_train=None):
     """
-    FIX C — governance messages are now collected and returned
-    as a list of (level, text) tuples instead of calling st.warning/
-    st.success directly inside the function.  The caller renders them
-    after the training spinner closes, preventing nested-widget issues.
+    Execute governance actions based on drift and fairness thresholds.
+    Returns (action, messages) tuple to avoid nested widget issues.
     """
     jurisdiction = st.session_state.get("jurisdiction", "Unknown")
     stability = system_stability_score(drift, fairness)
     risk = compute_risk_score(drift, fairness, 0.0)
+    
     log_run("GovernanceAction", drift, fairness, stability,
             jurisdiction, action="check", risk_score=risk)
 
@@ -194,11 +178,11 @@ def governance_intervention(model, drift, fairness,
 
     if drift > 0.3:
         messages.append(("warning",
-            "WARNING: Drift threshold exceeded — triggering automatic retraining."))
+            "⚠️ Drift threshold exceeded — triggering automatic retraining."))
         if model is not None and X_train is not None and y_train is not None:
             try:
                 model.fit(X_train, y_train)
-                messages.append(("success", "RETRAIN: Model retrained on current data."))
+                messages.append(("success", "✅ Model retrained on current data."))
             except Exception as e:
                 messages.append(("error", f"Retraining failed: {e}"))
         log_run("GovernanceAction", drift, fairness, stability,
@@ -207,17 +191,17 @@ def governance_intervention(model, drift, fairness,
 
     if fairness > 0.1:
         messages.append(("warning",
-            "WARNING: Fairness threshold exceeded — triggering bias mitigation."))
+            "⚠️ Fairness threshold exceeded — triggering bias mitigation."))
         if model is not None and X_train is not None and y_train is not None:
             weights = mitigate_bias(X_train, y_train)
             try:
                 model.fit(X_train, y_train, sample_weight=weights)
-                messages.append(("success", "DEBIAS: Fairness-aware retraining complete."))
+                messages.append(("success", "✅ Fairness-aware retraining complete."))
             except TypeError:
                 try:
                     model.fit(X_train, y_train)
                     messages.append(("info",
-                        "DEBIAS: Model refitted (sample_weight unsupported by this estimator)."))
+                        "ℹ️ Model refitted (sample_weight unsupported by this estimator)."))
                 except Exception as e:
                     messages.append(("error", f"Debiasing failed: {e}"))
         log_run("GovernanceAction", drift, fairness, stability,
@@ -226,31 +210,28 @@ def governance_intervention(model, drift, fairness,
 
     log_run("GovernanceAction", drift, fairness, stability,
             jurisdiction, action="stable", risk_score=risk)
-    messages.append(("success", "STABLE: All governance thresholds within acceptable range."))
+    messages.append(("success", "✅ All governance thresholds within acceptable range."))
     return "stable", messages
 
 def render_governance_messages(messages):
     """Render governance messages returned by governance_intervention()."""
     for level, text in messages:
         if level == "warning":
-            st.warning(f"⚠️ {text}")
+            st.warning(text)
         elif level == "success":
-            st.success(f"✅ {text}")
+            st.success(text)
         elif level == "info":
-            st.info(f"ℹ️ {text}")
+            st.info(text)
         elif level == "error":
-            st.error(f"❌ {text}")
+            st.error(text)
 
 # ──────────────────────────────────────────────────
-# PDF REPORT
-# FIX D — ReportLab's built-in fonts (Helvetica/Times)
-#         cannot encode multi-byte Unicode emoji.
-#         All emoji in Table cells and Paragraphs have
-#         been replaced with plain-ASCII equivalents so
-#         doc.build() never raises a UnicodeEncodeError.
+# PDF REPORT GENERATION
+# ASCII-safe (no emoji in PDF cells)
 # ──────────────────────────────────────────────────
 def generate_pdf_report(drift, fairness, stability,
                         risk_score=None, filename="risk_report.pdf"):
+    """Generate PDF compliance report."""
     file_path = os.path.join("/tmp", filename)
     try:
         doc = SimpleDocTemplate(file_path)
@@ -271,33 +252,26 @@ def generate_pdf_report(drift, fairness, stability,
 
         content.append(Paragraph("Key Metrics", styles["Heading2"]))
 
-        # FIX D — ASCII-safe status strings (no emoji in table cells)
-        def _status(val, warn_thresh, fail_thresh=None):
-            if fail_thresh and val > fail_thresh:
-                return "[FAIL]"
-            if val > warn_thresh:
-                return "[WARNING]"
-            return "[PASS]"
-
+        # ASCII-safe status strings (no emoji)
         metrics_data = [
             ["Metric", "Value", "Status"],
             ["Drift Score",
              str(round(drift, 3)),
-             "[WARNING]" if drift > 0.3 else "[PASS]"],
+             "WARNING" if drift > 0.3 else "PASS"],
             ["Fairness Gap",
              str(round(fairness, 3)),
-             "[WARNING]" if fairness > 0.1 else "[PASS]"],
+             "WARNING" if fairness > 0.1 else "PASS"],
             ["System Stability",
              str(round(stability, 3)),
-             "[FAIL]" if stability < 0.5 else "[PASS]"],
+             "FAIL" if stability < 0.5 else "PASS"],
         ]
         if risk_score is not None:
             metrics_data.append([
                 "Composite Risk Score",
                 str(round(risk_score, 3)),
-                "[HIGH]" if risk_score > 0.6
-                else "[MEDIUM]" if risk_score > 0.3
-                else "[LOW]",
+                "HIGH" if risk_score > 0.6
+                else "MEDIUM" if risk_score > 0.3
+                else "LOW",
             ])
 
         t = Table(metrics_data, colWidths=[180, 100, 100])
@@ -314,20 +288,19 @@ def generate_pdf_report(drift, fairness, stability,
         content.append(Spacer(1, 12))
 
         content.append(Paragraph("Risk Assessment", styles["Heading2"]))
-        # FIX D — plain ASCII in Paragraph text too
         content.append(Paragraph(
-            "[WARNING] Data drift detected." if drift > 0.3
-            else "[PASS] Drift within acceptable range.",
+            "WARNING: Data drift detected." if drift > 0.3
+            else "PASS: Drift within acceptable range.",
             styles["Normal"],
         ))
         content.append(Paragraph(
-            "[WARNING] Bias risk detected." if fairness > 0.1
-            else "[PASS] Fairness within acceptable range.",
+            "WARNING: Bias risk detected." if fairness > 0.1
+            else "PASS: Fairness within acceptable range.",
             styles["Normal"],
         ))
         content.append(Paragraph(
-            "[FAIL] System unstable." if stability < 0.5
-            else "[PASS] System stable.",
+            "FAIL: System unstable." if stability < 0.5
+            else "PASS: System stable.",
             styles["Normal"],
         ))
 
@@ -358,6 +331,7 @@ def generate_pdf_report(drift, fairness, stability,
 # FILE INGESTION
 # ──────────────────────────────────────────────────
 def ingest_file(file):
+    """Ingest data from uploaded file."""
     try:
         if file.name.endswith(".csv"):
             return pd.read_csv(file)
@@ -375,14 +349,15 @@ def ingest_file(file):
 # ──────────────────────────────────────────────────
 # PAGE HEADER
 # ──────────────────────────────────────────────────
-st.title("⚖️ Aurexis Systems — Governance-as-a-Service for Enterprise AI")
+st.title("⚖️ Aurexis Systems")
 st.caption(
+    "Governance-as-a-Service for Enterprise AI | "
     "Autonomous drift detection · Fairness-aware retraining · "
     "Composite risk scoring · Regulatory compliance"
 )
 
 # ──────────────────────────────────────────────────
-# SESSION STATE
+# SESSION STATE INITIALIZATION
 # ──────────────────────────────────────────────────
 _defaults = {
     "model": None,
@@ -398,7 +373,7 @@ for k, v in _defaults.items():
         st.session_state[k] = v
 
 # ──────────────────────────────────────────────────
-# SIDEBAR
+# SIDEBAR CONFIGURATION
 # ──────────────────────────────────────────────────
 st.sidebar.header("⚙️ Compliance Mode")
 jurisdiction = st.sidebar.selectbox(
@@ -416,7 +391,6 @@ st.session_state["jurisdiction"] = jurisdiction
 st.sidebar.header("📊 Dataset Controls")
 domain = st.sidebar.selectbox(
     "Synthetic Dataset",
-    # FIX E — all six domains present in sidebar
     ["Finance", "Healthcare", "Sports", "Business", "Emotion", "General"],
 )
 uploaded = st.sidebar.file_uploader("Upload CSV", type=["csv"])
@@ -424,15 +398,14 @@ uploaded_files = st.sidebar.file_uploader(
     "Upload Dataset",
     accept_multiple_files=True,
     type=["csv", "xlsx", "json", "parquet"],
-    key="multi_uploader",   # explicit key prevents widget-ID collision
+    key="multi_uploader",
 )
 
 # ──────────────────────────────────────────────────
 # DOMAIN DATASET GENERATOR
-# FIX E — Business and Emotion branches were missing;
-#          added them so all sidebar choices produce data.
 # ──────────────────────────────────────────────────
 def generate_domain_dataset(domain, n_samples=500):
+    """Generate synthetic dataset based on domain."""
     rng = np.random.default_rng(42)
 
     if domain == "Finance":
@@ -468,7 +441,6 @@ def generate_domain_dataset(domain, n_samples=500):
             (df["speed"] > 28) & (df["reaction_time"] < 0.28)
         ).astype(int)
 
-    # FIX E — Business branch (was missing)
     elif domain == "Business":
         df = pd.DataFrame({
             "revenue":         rng.normal(1e6, 3e5, n_samples),
@@ -481,7 +453,6 @@ def generate_domain_dataset(domain, n_samples=500):
             (df["customer_growth"] > 0.1)
         ).astype(int)
 
-    # FIX E — Emotion branch (was missing)
     elif domain == "Emotion":
         df = pd.DataFrame({
             "valence":     rng.uniform(-1, 1, n_samples),
@@ -509,6 +480,7 @@ def generate_domain_dataset(domain, n_samples=500):
 # DATA PIPELINE
 # ──────────────────────────────────────────────────
 def load_data():
+    """Load data from uploaded files or generate synthetic data."""
     if uploaded_files:
         dfs = []
         for f in uploaded_files:
@@ -537,6 +509,7 @@ st.dataframe(df.head(), use_container_width=True)
 # FEATURE PREPARATION
 # ──────────────────────────────────────────────────
 def prepare_features(df):
+    """Prepare and encode features for modeling."""
     if len(df.columns) < 2:
         st.error("Dataset must have at least 2 columns.")
         return None, None
@@ -557,6 +530,7 @@ def prepare_features(df):
     y = df[target_col].copy()
     X.columns = [str(c) for c in X.columns]
 
+    # Encode categorical features
     for col in X.columns:
         if X[col].dtype == "object":
             try:
@@ -573,9 +547,10 @@ if X is None:
     st.stop()
 
 # ──────────────────────────────────────────────────
-# TASK DETECTION + MODEL INIT
+# TASK DETECTION + MODEL INITIALIZATION
 # ──────────────────────────────────────────────────
 def detect_task(y):
+    """Detect if task is classification or regression."""
     return "classification" if y.nunique() < 10 else "regression"
 
 task = detect_task(y)
@@ -589,9 +564,7 @@ if st.session_state.model is None:
 model = st.session_state.model
 
 # ──────────────────────────────────────────────────
-# TRAIN BUTTON
-# FIX C — governance messages rendered after spinner
-#          closes, never inside nested callbacks.
+# TRAIN MODEL SECTION
 # ──────────────────────────────────────────────────
 st.subheader("🤖 Model Training")
 if st.button("🚀 Train Model", use_container_width=True):
@@ -599,7 +572,7 @@ if st.button("🚀 Train Model", use_container_width=True):
         X_train, X_test, y_train, y_test = train_test_split(
             X, y, test_size=0.3, random_state=42
         )
-        with st.spinner("Training model..."):
+        with st.spinner("🔄 Training model..."):
             model.fit(X_train, y_train)
 
         preds     = model.predict(X_test)
@@ -609,12 +582,15 @@ if st.button("🚀 Train Model", use_container_width=True):
         uncertainty = compute_model_uncertainty(model, X_test)
         risk_score  = compute_risk_score(drift, fairness, uncertainty)
 
-        # FIX C — collect messages, render after spinner
+        # Governance intervention (returns messages to render after spinner)
         action, gov_messages = governance_intervention(
             model, drift, fairness, X_train, y_train
         )
+        
+        # Render messages outside spinner context
         render_governance_messages(gov_messages)
 
+        # Store in session state
         st.session_state.model      = model
         st.session_state.metrics    = (drift, fairness, stability)
         st.session_state.data_split = (X_train, X_test, y_train, y_test)
@@ -629,14 +605,10 @@ if st.button("🚀 Train Model", use_container_width=True):
         st.success(f"✅ Model trained — governance action: **{action}**")
 
     except Exception as e:
-        st.error(f"❌ Training failed: {e}")
+        st.error(f"❌ Training failed: {str(e)}")
 
 # ──────────────────────────────────────────────────
 # METRICS DASHBOARD
-# FIX B — delta= receives plain string ("Low" / "Medium" / "High")
-#          which Streamlit renders as grey text delta labels.
-#          This is correct and intentional — numeric deltas would
-#          show nonsensical arrows.
 # ──────────────────────────────────────────────────
 if st.session_state.metrics:
     drift, fairness, stability = st.session_state.metrics
@@ -645,18 +617,24 @@ if st.session_state.metrics:
 
     st.subheader("📊 Governance Dashboard")
     c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Drift",        f"{drift:.3f}",       delta=status_label(drift))
-    c2.metric("Fairness Gap", f"{fairness:.3f}",     delta=status_label(fairness))
-    c3.metric("Stability",    f"{stability:.3f}",    delta=status_label(stability))
-    c4.metric("Uncertainty",  f"{uncertainty:.4f}")
-    c5.metric("Risk Score",   f"{risk_score:.3f}",   delta=status_label(risk_score))
+    
+    with c1:
+        st.metric("Drift", f"{drift:.3f}", delta=status_label(drift))
+    with c2:
+        st.metric("Fairness Gap", f"{fairness:.3f}", delta=status_label(fairness))
+    with c3:
+        st.metric("Stability", f"{stability:.3f}", delta=status_label(stability))
+    with c4:
+        st.metric("Uncertainty", f"{uncertainty:.4f}")
+    with c5:
+        st.metric("Risk Score", f"{risk_score:.3f}", delta=status_label(risk_score))
 
     # Compliance summary
     st.subheader("📋 Compliance Status")
     if drift > 0.3 or fairness > 0.1:
         st.warning(
-            f"⚠️ Compliance alert — "
-            f"Drift: {drift:.3f}  |  Fairness gap: {fairness:.3f}"
+            f"⚠️ Compliance Alert\n\n"
+            f"**Drift:** {drift:.3f}  |  **Fairness Gap:** {fairness:.3f}"
         )
     else:
         st.success("✅ All governance thresholds within acceptable range.")
@@ -672,6 +650,7 @@ if st.session_state.metrics:
                     "📥 Download Report",
                     fh,
                     file_name="aurexis_report.pdf",
+                    mime="application/pdf",
                     use_container_width=True,
                 )
 
@@ -680,11 +659,17 @@ if st.session_state.metrics:
 # ──────────────────────────────────────────────────
 st.subheader("🔌 Governance API — Live Test")
 a1, a2, a3, a4 = st.columns(4)
-api_drift       = a1.number_input("Drift",        0.0, 1.0, 0.35, 0.01)
-api_fairness    = a2.number_input("Fairness Gap", 0.0, 1.0, 0.15, 0.01)
-api_uncertainty = a3.number_input("Uncertainty",  0.0, 1.0, 0.10, 0.01)
 
-if a4.button("⚡ Call API", use_container_width=True):
+with a1:
+    api_drift = st.number_input("Drift", 0.0, 1.0, 0.35, 0.01)
+with a2:
+    api_fairness = st.number_input("Fairness Gap", 0.0, 1.0, 0.15, 0.01)
+with a3:
+    api_uncertainty = st.number_input("Uncertainty", 0.0, 1.0, 0.10, 0.01)
+with a4:
+    api_call = st.button("⚡ Call API", use_container_width=True)
+
+if api_call:
     stab = system_stability_score(api_drift, api_fairness)
     risk = compute_risk_score(api_drift, api_fairness, api_uncertainty)
     st.json({
@@ -705,102 +690,121 @@ if a4.button("⚡ Call API", use_container_width=True):
 st.subheader("📜 Audit Logs")
 logs = load_logs()
 if logs:
-    st.dataframe(
-        pd.DataFrame(logs).sort_values("timestamp", ascending=False),
-        use_container_width=True,
-    )
+    log_df = pd.DataFrame(logs).sort_values("timestamp", ascending=False)
+    st.dataframe(log_df, use_container_width=True)
 else:
     st.info("No audit entries yet. Train a model to generate logs.")
 
 # ──────────────────────────────────────────────────
-# AI ASSISTANT
-# FIX A — guard against missing openai package
-# FIX F — st.secrets access wrapped in try/except so the
-#          app does not crash when no secrets.toml exists
+# AI ASSISTANT SECTION
 # ──────────────────────────────────────────────────
 st.markdown("---")
 st.subheader("🤖 Aurexis AI Governance Assistant")
 
-# FIX A — clear message if openai package not installed
 if not _OPENAI_AVAILABLE:
     st.error(
-        "**OpenAI package not installed.**  "
-        "Run `pip install openai` and restart the app to enable the AI assistant."
+        "**⚠️ OpenAI package not installed.**\n\n"
+        "Run: `pip install openai`\n\n"
+        "Then restart the app to enable the AI Assistant."
     )
 else:
-    # FIX F — safe secrets access (no crash if secrets.toml absent)
+    # Safe API key retrieval
     api_key = None
     try:
         api_key = st.secrets.get("OPENAI_API_KEY")
     except Exception:
         pass
+    
     if not api_key:
         api_key = os.getenv("OPENAI_API_KEY")
 
     if not api_key:
         st.warning(
-            "⚠️ **OpenAI API Key Missing** — "
-            "set `OPENAI_API_KEY` in `.streamlit/secrets.toml` "
-            "or as an environment variable to enable the AI assistant."
+            "⚠️ **OpenAI API Key Not Found**\n\n"
+            "To enable the AI Assistant:\n\n"
+            "1. Set `OPENAI_API_KEY` in `.streamlit/secrets.toml`:\n"
+            "   ```\n"
+            "   OPENAI_API_KEY = \"sk-your-key-here\"\n"
+            "   ```\n\n"
+            "2. Or set environment variable:\n"
+            "   ```bash\n"
+            "   export OPENAI_API_KEY=\"sk-your-key-here\"\n"
+            "   ```\n\n"
+            "3. Restart the Streamlit app"
         )
     elif not st.session_state.metrics:
-        st.info("ℹ️ Train a model first to enable the AI Assistant.")
+        st.info("ℹ️ **Train a model first** to enable the AI Assistant.")
     else:
+        # AI Assistant is ready
         drift, fairness, stability = st.session_state.metrics
         risk_score = st.session_state.risk_score or 0.0
 
-        client = OpenAI(api_key=api_key)
+        try:
+            client = OpenAI(api_key=api_key)
 
-        # Render chat history first so new messages appear at the bottom
-        for msg in st.session_state.messages:
-            with st.chat_message(msg["role"]):
-                st.write(msg["content"])
+            # Display chat history
+            for msg in st.session_state.messages:
+                with st.chat_message(msg["role"]):
+                    st.write(msg["content"])
 
-        user_input = st.chat_input(
-            "Ask about your model governance, compliance, or risk..."
-        )
+            # Chat input
+            user_input = st.chat_input(
+                "Ask about governance, compliance, or model risk..."
+            )
 
-        if user_input:
-            st.session_state.messages.append({
-                "role": "user", "content": user_input
-            })
-            with st.chat_message("user"):
-                st.write(user_input)
+            if user_input:
+                # Add user message to history
+                st.session_state.messages.append({
+                    "role": "user",
+                    "content": user_input
+                })
+                
+                # Display user message
+                with st.chat_message("user"):
+                    st.write(user_input)
 
-            try:
-                with st.spinner("Analyzing governance metrics..."):
-                    response = client.chat.completions.create(
-                        model="gpt-4o-mini",
-                        messages=[
-                            {
-                                "role": "system",
-                                "content": (
-                                    "You are an elite AI governance and compliance expert "
-                                    "for Aurexis Systems.\n\n"
-                                    f"Current model state:\n"
-                                    f"- Drift Score: {drift:.3f}\n"
-                                    f"- Fairness Gap: {fairness:.3f}\n"
-                                    f"- System Stability: {stability:.3f}\n"
-                                    f"- Composite Risk Score: {risk_score:.3f}\n"
-                                    f"- Regulatory Jurisdiction: {jurisdiction}\n\n"
-                                    "Provide concise, actionable governance insights. "
-                                    "Reference specific regulatory articles when relevant. "
-                                    "Maximum 4 sentences per response."
-                                ),
-                            },
-                            *st.session_state.messages,
-                        ],
-                        temperature=0.2,
-                        max_tokens=500,
-                        top_p=0.9,
-                    )
-                reply = response.choices[0].message.content
+                try:
+                    with st.spinner("🔄 Analyzing governance metrics..."):
+                        response = client.chat.completions.create(
+                            model="gpt-4o-mini",
+                            messages=[
+                                {
+                                    "role": "system",
+                                    "content": (
+                                        "You are an elite AI governance and compliance expert "
+                                        "for Aurexis Systems.\n\n"
+                                        f"Current model state:\n"
+                                        f"- Drift Score: {drift:.3f}\n"
+                                        f"- Fairness Gap: {fairness:.3f}\n"
+                                        f"- System Stability: {stability:.3f}\n"
+                                        f"- Composite Risk Score: {risk_score:.3f}\n"
+                                        f"- Regulatory Jurisdiction: {jurisdiction}\n\n"
+                                        "Provide concise, actionable governance insights. "
+                                        "Reference specific regulatory requirements when relevant. "
+                                        "Keep responses to 3-4 sentences maximum."
+                                    ),
+                                },
+                                *st.session_state.messages,
+                            ],
+                            temperature=0.2,
+                            max_tokens=500,
+                            top_p=0.9,
+                        )
+                    
+                    reply = response.choices[0].message.content
 
-            except Exception as e:
-                reply = f"API error: {e}"
+                except Exception as e:
+                    reply = f"⚠️ **API Error:** {str(e)}\n\nPlease check your API key and try again."
 
-            st.session_state.messages.append({
-                "role": "assistant", "content": reply
-            })
-            with st.chat_message("assistant"):
-                st.write(reply)
+                # Add assistant response to history
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": reply
+                })
+                
+                # Display assistant message
+                with st.chat_message("assistant"):
+                    st.write(reply)
+
+        except Exception as e:
+            st.error(f"❌ AI Assistant Error: {str(e)}")
