@@ -1,6 +1,8 @@
 streamlit
 pandas
 numpy
+cryptography
+PyJWT
 scikit-learn
 scipy
 reportlab
