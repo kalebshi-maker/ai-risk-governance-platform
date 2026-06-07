@@ -25,9 +25,9 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 from reportlab.lib import colors
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
 from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
-from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from scipy.stats import ks_2samp, wasserstein_distance
 from sklearn.datasets import make_classification
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
@@ -946,12 +946,116 @@ def split_dataset(
 # ══════════════════════════════════════════════════════════════════════════
 # AI ADVISOR
 # ══════════════════════════════════════════════════════════════════════════
-def local_governance_advice(prompt: str, metrics: Optional[Dict[str, float]], risk_class: Dict[str, Any], jurisdiction: str) -> str:
+LANGUAGE_LABELS = {
+    "zh": "Chinese",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "ar": "Arabic",
+    "ru": "Russian",
+    "es": "Spanish",
+    "fr": "French",
+    "de": "German",
+    "pt": "Portuguese",
+    "it": "Italian",
+    "en": "English",
+}
+
+
+def detect_user_language(text: str) -> str:
+    """Dependency-free language/script detection for routing advisor replies.
+
+    OpenAI handles broad multilingual generation when available. This helper
+    gives the prompt an explicit language target and lets the local fallback
+    respond naturally for common languages without adding another dependency.
+    """
+    sample = (text or "").strip().lower()
+    if not sample:
+        return "en"
+
+    script_counts = {
+        "zh": sum("\u4e00" <= char <= "\u9fff" for char in sample),
+        "ja": sum(("\u3040" <= char <= "\u30ff") for char in sample),
+        "ko": sum("\uac00" <= char <= "\ud7af" for char in sample),
+        "ar": sum("\u0600" <= char <= "\u06ff" for char in sample),
+        "ru": sum("\u0400" <= char <= "\u04ff" for char in sample),
+    }
+    detected_script, count = max(script_counts.items(), key=lambda item: item[1])
+    if count > 0:
+        return detected_script
+
+    latin_markers = {
+        "es": ("¿", "¡", "qué", "como", "cómo", "hola", "gracias", "trabajo", "aprendizaje"),
+        "fr": ("bonjour", "merci", "travail", "apprentissage", "é", "à", "ç", "être"),
+        "de": ("hallo", "danke", "arbeit", "lernen", "über", "für", "nicht", "ich"),
+        "pt": ("olá", "obrigado", "obrigada", "trabalho", "aprendizado", "ção", "você"),
+        "it": ("ciao", "grazie", "lavoro", "studio", "perché", "quotidiana"),
+    }
+    for lang, markers in latin_markers.items():
+        if any(marker in sample for marker in markers):
+            return lang
+    return "en"
+
+
+def translated_recommendations(recommendations: List[str], language: str) -> List[str]:
+    translations = {
+        "Escalate to human review before deployment.": {
+            "zh": "部署前升级给人工审核。",
+            "es": "Escalar a revisión humana antes del despliegue.",
+            "fr": "Transmettre à une revue humaine avant le déploiement.",
+        },
+        "Investigate data drift and consider retraining or data-quality controls.": {
+            "zh": "检查数据漂移，并考虑重新训练模型或加强数据质量控制。",
+            "es": "Investigar la deriva de datos y considerar reentrenamiento o controles de calidad.",
+            "fr": "Analyser la dérive des données et envisager un réentraînement ou des contrôles qualité.",
+        },
+        "Run a fairness audit and document bias mitigation actions.": {
+            "zh": "进行公平性审计，并记录偏差缓解措施。",
+            "es": "Ejecutar una auditoría de equidad y documentar las acciones de mitigación de sesgos.",
+            "fr": "Réaliser un audit d'équité et documenter les mesures de réduction des biais.",
+        },
+        "Hold deployment until stability improves.": {
+            "zh": "在稳定性改善前暂停部署。",
+            "es": "Detener el despliegue hasta que mejore la estabilidad.",
+            "fr": "Suspendre le déploiement jusqu'à amélioration de la stabilité.",
+        },
+        "Current metrics are within default thresholds; continue periodic monitoring.": {
+            "zh": "当前指标在默认阈值内；继续进行周期性监控。",
+            "es": "Las métricas actuales están dentro de los umbrales; continúe el monitoreo periódico.",
+            "fr": "Les métriques actuelles respectent les seuils; poursuivre la surveillance périodique.",
+        },
+    }
+    return [translations.get(item, {}).get(language, item) for item in recommendations]
+
+
+def local_governance_advice(
+    prompt: str,
+    metrics: Optional[Dict[str, float]],
+    risk_class: Dict[str, Any],
+    jurisdiction: str,
+    language: Optional[str] = None,
+) -> str:
     prompt = prompt.strip() or "Provide governance guidance."
+    language = language or detect_user_language(prompt)
+
     if not metrics:
+        if language == "zh":
+            return (
+                "你好！我可以用中文和你交流。你可以和我聊 AI 治理、合规、风险管理，也可以聊日常生活、学习和工作。"
+                "如果你想让我分析模型的漂移、公平性、稳定性和风险，请先在上方训练一个模型。"
+            )
+        if language == "es":
+            return (
+                "Hola. Puedo responder en español. Podemos hablar de gobernanza de IA, cumplimiento, "
+                "vida diaria, aprendizaje o trabajo. Entrena un modelo primero si quieres que analice métricas."
+            )
+        if language == "fr":
+            return (
+                "Bonjour. Je peux répondre en français. Nous pouvons discuter de gouvernance IA, de conformité, "
+                "de vie quotidienne, d'apprentissage ou de travail. Entraînez d'abord un modèle pour analyser les métriques."
+            )
         return (
-            "Hello. Train a model first so I can analyze drift, fairness, stability, and risk. "
-            "In the meantime, configure the jurisdiction, domain, target column, and optional sensitive feature in the sidebar."
+            "Hello. I can discuss AI governance, compliance, daily life, learning, and work with you. "
+            "Train a model first if you want me to analyze drift, fairness, stability, and risk."
         )
 
     recommendations = []
@@ -966,12 +1070,42 @@ def local_governance_advice(prompt: str, metrics: Optional[Dict[str, float]], ri
     if not recommendations:
         recommendations.append("Current metrics are within default thresholds; continue periodic monitoring.")
 
+    localized_recommendations = translated_recommendations(recommendations, language)
+
+    if language == "zh":
+        return (
+            f"你刚才说：{prompt}\n\n"
+            f"风险分类：{risk_class['classification']}（{risk_class['monitoring_level']} 监控）\n"
+            f"监管/框架：{jurisdiction}\n"
+            f"当前风险分数：{metrics.get('risk_score', 0):.3f}\n\n"
+            "建议的下一步：\n- " + "\n- ".join(localized_recommendations) +
+            "\n\n如果你愿意，我们也可以继续用中文聊你的学习计划、工作流程、产品想法或日常生活。"
+        )
+
+    if language == "es":
+        return (
+            f"Respuesta local de Aurexis para: {prompt}\n\n"
+            f"Clasificación de riesgo: {risk_class['classification']} ({risk_class['monitoring_level']} monitoreo)\n"
+            f"Jurisdicción/marco: {jurisdiction}\n"
+            f"Puntuación de riesgo actual: {metrics.get('risk_score', 0):.3f}\n\n"
+            "Próximos pasos recomendados:\n- " + "\n- ".join(localized_recommendations)
+        )
+
+    if language == "fr":
+        return (
+            f"Réponse locale d'Aurexis pour : {prompt}\n\n"
+            f"Classification du risque : {risk_class['classification']} ({risk_class['monitoring_level']} surveillance)\n"
+            f"Juridiction/cadre : {jurisdiction}\n"
+            f"Score de risque actuel : {metrics.get('risk_score', 0):.3f}\n\n"
+            "Prochaines étapes recommandées :\n- " + "\n- ".join(localized_recommendations)
+        )
+
     return (
         f"Local Aurexis Advisor response for: {prompt}\n\n"
         f"Risk classification: {risk_class['classification']} ({risk_class['monitoring_level']} monitoring)\n"
         f"Jurisdiction/framework: {jurisdiction}\n"
         f"Current risk score: {metrics.get('risk_score', 0):.3f}\n\n"
-        "Recommended next steps:\n- " + "\n- ".join(recommendations)
+        "Recommended next steps:\n- " + "\n- ".join(localized_recommendations)
     )
 
 
@@ -1009,9 +1143,13 @@ def render_ai_advisor(domain: str, jurisdiction: str) -> None:
         with st.chat_message(message["role"]):
             st.write(message["content"])
 
-    user_input = st.chat_input("Ask about governance, compliance, risk, drift, or fairness...")
+    user_input = st.chat_input("Ask in any language about governance, daily life, learning, work, risk, drift, or fairness...")
     if not user_input:
         return
+
+    user_language = detect_user_language(user_input)
+    language_name = LANGUAGE_LABELS.get(user_language, "the user's language")
+    st.caption(f"Detected conversation language: {language_name}")
 
     st.session_state.messages.append({"role": "user", "content": user_input})
     with st.chat_message("user"):
@@ -1027,9 +1165,15 @@ def render_ai_advisor(domain: str, jurisdiction: str) -> None:
                     {
                         "role": "system",
                         "content": (
-                            "You are an expert AI governance advisor for Aurexis Systems. "
-                            "Give concise, actionable guidance for NIST AI RMF, EU AI Act, ISO/IEC 42001, "
-                            "OECD principles, UNESCO ethics, model risk management, drift, fairness, and audit readiness.\n\n"
+                            "You are Aurexis Systems AI, a warm, multilingual AI governance advisor and practical companion. "
+                            "First detect the user's latest message language and reply in that same language. "
+                            f"The detected language for this turn is: {language_name}. "
+                            "If the user writes Chinese, reply naturally in Chinese. If the user mixes languages, use the primary language. "
+                            "Do not switch to English unless the user asks for English. "
+                            "You can discuss AI governance, compliance, model risk, drift, fairness, audit readiness, "
+                            "and also friendly everyday topics such as daily life, learning plans, work experiences, product ideas, "
+                            "career growth, and study habits. Keep a helpful, emotionally intelligent, professional tone. "
+                            "When the user asks casual questions, engage naturally; when useful, connect the conversation back to responsible AI.\n\n"
                             f"Domain: {domain}\n"
                             f"Risk classification: {risk_class['classification']}\n"
                             f"Jurisdiction: {jurisdiction}\n"
@@ -1047,12 +1191,12 @@ def render_ai_advisor(domain: str, jurisdiction: str) -> None:
                 "OpenAI quota or billing is unavailable for this API key. "
                 "Using the built-in local Aurexis Advisor instead."
             )
-            reply = local_governance_advice(user_input, metrics, risk_class, jurisdiction)
+            reply = local_governance_advice(user_input, metrics, risk_class, jurisdiction, user_language)
         except Exception as exc:
             st.warning(f"OpenAI advisor unavailable ({exc}). Using local guidance instead.")
-            reply = local_governance_advice(user_input, metrics, risk_class, jurisdiction)
+            reply = local_governance_advice(user_input, metrics, risk_class, jurisdiction, user_language)
     else:
-        reply = local_governance_advice(user_input, metrics, risk_class, jurisdiction)
+        reply = local_governance_advice(user_input, metrics, risk_class, jurisdiction, user_language)
 
     st.session_state.messages.append({"role": "assistant", "content": reply})
     with st.chat_message("assistant"):
