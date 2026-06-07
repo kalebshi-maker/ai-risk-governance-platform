@@ -50,21 +50,26 @@ try:
     from cryptography.hazmat.backends import default_backend
     from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.asymmetric import ec
-
-    _HAS_CRYPTOGRAPHY = True
-except Exception:  # pragma: no cover - only used when dependency is missing
+except Exception as crypto_import_error:  # pragma: no cover - dependency fallback
     _HAS_CRYPTOGRAPHY = False
+    Fernet = None
+    default_backend = None
+    hashes = None
+    ec = None
 
     class InvalidToken(Exception):
         """Fallback for cryptography.fernet.InvalidToken."""
 
+else:
+    _HAS_CRYPTOGRAPHY = True
+
 try:
     import jwt as _pyjwt
-
-    _HAS_PYJWT = True
-except Exception:  # pragma: no cover - only used when dependency is missing
+except Exception as jwt_import_error:  # pragma: no cover - dependency fallback
     _pyjwt = None
     _HAS_PYJWT = False
+else:
+    _HAS_PYJWT = True
 
 
 # ===========================================================================
