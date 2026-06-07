@@ -311,6 +311,8 @@ class CryptoSigner:
 @st.cache_resource
 def get_crypto_service() -> CryptoSigner:
     return CryptoSigner(get_encryption_key())
+
+
 # ===========================================================================
 # DATABASE SERVICE
 # ===========================================================================
@@ -655,7 +657,8 @@ class EvidenceVaultService:
             "signature": signature[:32] + "...",
             "timestamp": timestamp,
         }
-            @staticmethod
+
+    @staticmethod
     def get_chain_of_custody(
         conn: sqlite3.Connection,
         model_id: str,
@@ -1009,6 +1012,8 @@ def login_view() -> None:
             "| `approver` | `approver` | Deployment Approver |\n"
             "| `admin` | `admin` | Platform Admin |"
         )
+
+
 def sidebar(user: CurrentUser) -> str:
     with st.sidebar:
         st.markdown("### 🛡️ Aurexis Systems")
@@ -1435,4 +1440,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-    
