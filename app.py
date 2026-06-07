@@ -1,1442 +1,1329 @@
 """
 ╔═══════════════════════════════════════════════════════════════════════════╗
 ║                                                                           ║
-║     AUREXIS SYSTEMS — PRODUCTION v5.5.1 (ENTERPRISE-HARDENED)            ║
+║              AUREXIS SYSTEMS — VERSION C                                  ║
+║          AI Governance Operating System (Production-Grade)                ║
 ║                                                                           ║
-║    Distributed AI Governance Operating System                             ║
-║    Production-Validated, Microservices-Ready, Fault-Tolerant              ║
-║                                                                           ║
-║  Streamlit deployment profile:                                             ║
-║  • Single-command dashboard: streamlit run app.py                         ║
-║  • Embedded SQLite persistence with immutable/WORM governance tables       ║
-║  • Local HSM-ready crypto abstraction with ECDSA/Fernet when available     ║
-║  • JWT authentication, RBAC, tenant isolation, rate limiting               ║
-║  • Policy engine, audit trail, evidence vault, approvals, model registry   ║
-║  • In-process Prometheus-style metrics and health diagnostics              ║
+║  Governance Frameworks:                                                   ║
+║  • NIST AI Risk Management Framework                                      ║
+║  • EU AI Act (High-Risk Classification)                                   ║
+║  • OECD AI Principles                                                     ║
+║  • UNESCO AI Ethics Recommendations                                       ║
+║  • ISO/IEC 42001 AI Management Systems                                    ║
 ║                                                                           ║
 ╚═══════════════════════════════════════════════════════════════════════════╝
 """
 
-from __future__ import annotations
-
-import base64
+import datetime as dt
 import hashlib
-import hmac
 import json
-import logging
 import os
-import secrets
-import sqlite3
-import time
-import uuid
-from collections import defaultdict, deque
-from contextlib import contextmanager
-from dataclasses import dataclass
-from datetime import datetime as dt, timedelta
-from enum import Enum
-from typing import Any, Deque, Dict, Iterable, List, Optional, Tuple
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
 import pandas as pd
 import streamlit as st
-
-# ---------------------------------------------------------------------------
-# Optional security stack
-# ---------------------------------------------------------------------------
-# The preferred production profile uses cryptography + PyJWT. The standard
-# library fallbacks keep Streamlit Cloud/demo environments bootable when wheels
-# are unavailable, while keeping the public service surface identical.
-try:
-    from cryptography.fernet import Fernet, InvalidToken
-    from cryptography.hazmat.backends import default_backend
-    from cryptography.hazmat.primitives import hashes
-    from cryptography.hazmat.primitives.asymmetric import ec
-    _HAS_CRYPTOGRAPHY = True
-except Exception:  # pragma: no cover - dependency fallback
-    _HAS_CRYPTOGRAPHY = False
-    Fernet = default_backend = hashes = ec = None
-
-    class InvalidToken(Exception):
-        """Fallback for cryptography.fernet.InvalidToken."""
+from reportlab.lib import colors
+from reportlab.lib.units import inch
+from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from scipy.stats import ks_2samp, wasserstein_distance
+from sklearn.datasets import make_classification
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
 
 try:
-    import jwt as _pyjwt
-    _HAS_PYJWT = True
-except Exception:  # pragma: no cover - dependency fallback
-    _pyjwt = None
-    _HAS_PYJWT = False
-
-
-# ===========================================================================
-# CONFIGURATION
-# ===========================================================================
-
-
-class Environment(str, Enum):
-    DEV = "development"
-    STAGING = "staging"
-    PRODUCTION = "production"
-
-
-class Config:
-    """Streamlit-safe production configuration."""
-
-    ENV = Environment(os.getenv("AUREXIS_ENV", "development"))
-    DEBUG = ENV == Environment.DEV
-
-    API_TITLE = "AUREXIS SYSTEMS — PRODUCTION v5.5.1 (ENTERPRISE-HARDENED)"
-    API_VERSION = "5.5.1"
-    API_DESCRIPTION = "Distributed AI Governance Operating System"
-
-    DB_PATH = os.getenv("AUREXIS_DB_PATH", "aurexis.db")
-
-    ENCRYPTION_KEY_RAW = os.getenv("ENCRYPTION_KEY", "")
-    JWT_SECRET = os.getenv("JWT_SECRET", "dev-secret-only-for-local-testing")
-    JWT_ALGORITHM = "HS256"
-    JWT_EXPIRY_HOURS = int(os.getenv("JWT_EXPIRY_HOURS", "24"))
-
-    RATE_LIMIT_REQUESTS = int(os.getenv("RATE_LIMIT_REQUESTS", "1000"))
-    RATE_LIMIT_PERIOD = int(os.getenv("RATE_LIMIT_PERIOD", "3600"))
-
-    KMS_PROVIDER = os.getenv("KMS_PROVIDER", "local")
-    LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
-
-    # Streamlit mode never requires Postgres/Redis/Kafka to boot, but the
-    # dashboard surfaces these production integration points for transparency.
-    DATABASE_PROFILE = "embedded-sqlite"
-    STATE_PROFILE = "in-process"
-    MESSAGE_QUEUE_PROFILE = "in-process-events"
-
-    @classmethod
-    def production_warnings(cls) -> List[str]:
-        warnings: List[str] = []
-        if cls.ENV == Environment.PRODUCTION:
-            if cls.JWT_SECRET == "dev-secret-only-for-local-testing":
-                warnings.append("JWT_SECRET is using the development fallback.")
-            if len(cls.JWT_SECRET) < 32:
-                warnings.append("JWT_SECRET should be at least 32 characters.")
-            if not cls.ENCRYPTION_KEY_RAW:
-                warnings.append("ENCRYPTION_KEY is not set; encrypted data will be process-local.")
-        return warnings
-
-
-logging.basicConfig(level=Config.LOG_LEVEL)
-logger = logging.getLogger("aurexis")
-
-
-def _utcnow() -> dt:
-    return dt.utcnow()
-
-
-def _json_dumps(value: Any) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"))
-
-
-def _normalise_fernet_key(raw: str) -> bytes:
-    """Return a valid Fernet key from env input or generated key material."""
-    if not _HAS_CRYPTOGRAPHY:
-        key_material = raw.encode() if raw else secrets.token_bytes(32)
-        return base64.urlsafe_b64encode(hashlib.sha256(key_material).digest())
-
-    if raw:
-        candidate = raw.encode()
-        try:
-            Fernet(candidate)
-            return candidate
-        except Exception:
-            # Accept passphrases/secrets from env and derive the required
-            # url-safe 32-byte Fernet key deterministically.
-            return base64.urlsafe_b64encode(hashlib.sha256(candidate).digest())
-
-    return Fernet.generate_key()
-
-
-@st.cache_resource
-def get_encryption_key() -> bytes:
-    return _normalise_fernet_key(Config.ENCRYPTION_KEY_RAW)
-
-
-# ===========================================================================
-# METRICS
-# ===========================================================================
-
-
-class Metrics:
-    """In-process Prometheus-style counters and latency histograms."""
-
-    def __init__(self):
-        self.counters: Dict[str, int] = defaultdict(int)
-        self.latencies: Dict[str, Deque[float]] = defaultdict(lambda: deque(maxlen=200))
-
-    @staticmethod
-    def _key(name: str, labels: Optional[Dict[str, str]] = None) -> str:
-        if not labels:
-            return name
-        label_text = ",".join(f"{k}={labels[k]}" for k in sorted(labels))
-        return f"{name}{{{label_text}}}"
-
-    def inc(self, name: str, amount: int = 1, labels: Optional[Dict[str, str]] = None) -> None:
-        self.counters[self._key(name, labels)] += amount
-
-    def observe(self, name: str, value: float, labels: Optional[Dict[str, str]] = None) -> None:
-        self.latencies[self._key(name, labels)].append(value)
-
-    def get(self, name: str, labels: Optional[Dict[str, str]] = None) -> int:
-        return self.counters[self._key(name, labels)]
-
-    def snapshot(self) -> Dict[str, int]:
-        return dict(sorted(self.counters.items()))
-
-    def latency_snapshot(self) -> List[Dict[str, Any]]:
-        rows: List[Dict[str, Any]] = []
-        for name, values in sorted(self.latencies.items()):
-            if not values:
-                continue
-            series = list(values)
-            rows.append(
-                {
-                    "metric": name,
-                    "samples": len(series),
-                    "avg_ms": round((sum(series) / len(series)) * 1000, 2),
-                    "max_ms": round(max(series) * 1000, 2),
-                }
-            )
-        return rows
-
-
-@st.cache_resource
-def get_metrics() -> Metrics:
-    return Metrics()
-
-
-class instrument:
-    """Measure a service block as a Prometheus-style latency metric."""
-
-    def __init__(self, name: str, labels: Optional[Dict[str, str]] = None):
-        self.name = name
-        self.labels = labels
-        self.started = 0.0
-
-    def __enter__(self):
-        self.started = time.perf_counter()
-        return self
-
-    def __exit__(self, exc_type, exc, tb):
-        get_metrics().observe(self.name, time.perf_counter() - self.started, self.labels)
-        if exc_type:
-            get_metrics().inc("aurexis_errors_total", labels={"error_type": exc_type.__name__})
-        return False
-
-
-# ===========================================================================
-# CRYPTOGRAPHY SERVICE
-# ===========================================================================
-
-
-class CryptoSigner:
-    """HSM-aware signer/encrypter adapted for single-process Streamlit."""
-
-    def __init__(self, encryption_key: bytes):
-        self.kms_provider = Config.KMS_PROVIDER
-        self.backend_name = "cryptography" if _HAS_CRYPTOGRAPHY else "stdlib"
-        self._key = encryption_key
-
-        if _HAS_CRYPTOGRAPHY:
-            self.backend = default_backend()
-            self.private_key = ec.generate_private_key(ec.SECP256R1(), self.backend)
-            self.cipher_suite = Fernet(encryption_key)
-        else:
-            self._secret = hashlib.sha256(encryption_key).digest()
-
-    def health(self) -> Dict[str, str]:
-        provider = self.kms_provider
-        if provider != "local":
-            provider = f"{provider} (configured; local envelope active in Streamlit)"
-        return {
-            "crypto_backend": self.backend_name,
-            "kms_provider": provider,
-            "signing": "ECDSA-SECP256R1" if _HAS_CRYPTOGRAPHY else "HMAC-SHA256",
-            "encryption": "Fernet" if _HAS_CRYPTOGRAPHY else "HMAC-authenticated XOR stream",
-        }
-
-    def sign_document(self, document: str) -> str:
-        if _HAS_CRYPTOGRAPHY:
-            digest = hashes.Hash(hashes.SHA256(), backend=self.backend)
-            digest.update(document.encode())
-            doc_hash = digest.finalize()
-            return self.private_key.sign(doc_hash, ec.ECDSA(hashes.SHA256())).hex()
-        return hmac.new(self._secret, document.encode(), hashlib.sha256).hexdigest()
-
-    def encrypt_sensitive(self, data: str) -> str:
-        if _HAS_CRYPTOGRAPHY:
-            return self.cipher_suite.encrypt(data.encode()).decode()
-        return self._stdlib_encrypt(data.encode())
-
-    def decrypt_sensitive(self, encrypted: str) -> str:
-        try:
-            if _HAS_CRYPTOGRAPHY:
-                return self.cipher_suite.decrypt(encrypted.encode()).decode()
-            return self._stdlib_decrypt(encrypted)
-        except InvalidToken:
-            raise
-        except Exception as exc:
-            raise InvalidToken(str(exc)) from exc
-
-    def _keystream(self, nonce: bytes, length: int) -> bytes:
-        out = bytearray()
-        counter = 0
-        while len(out) < length:
-            block = hashlib.sha256(self._secret + nonce + counter.to_bytes(8, "big")).digest()
-            out.extend(block)
-            counter += 1
-        return bytes(out[:length])
-
-    def _stdlib_encrypt(self, plaintext: bytes) -> str:
-        nonce = secrets.token_bytes(16)
-        cipher = bytes(b ^ k for b, k in zip(plaintext, self._keystream(nonce, len(plaintext))))
-        tag = hmac.new(self._secret, nonce + cipher, hashlib.sha256).digest()
-        return base64.urlsafe_b64encode(nonce + tag + cipher).decode()
-
-    def _stdlib_decrypt(self, token: str) -> str:
-        raw = base64.urlsafe_b64decode(token.encode())
-        if len(raw) < 48:
-            raise InvalidToken("Encrypted token is too short.")
-        nonce, tag, cipher = raw[:16], raw[16:48], raw[48:]
-        expected = hmac.new(self._secret, nonce + cipher, hashlib.sha256).digest()
-        if not hmac.compare_digest(tag, expected):
-            raise InvalidToken("Authentication tag mismatch.")
-        plaintext = bytes(b ^ k for b, k in zip(cipher, self._keystream(nonce, len(cipher))))
-        return plaintext.decode()
-
-
-@st.cache_resource
-def get_crypto_service() -> CryptoSigner:
-    return CryptoSigner(get_encryption_key())
-
-
-# ===========================================================================
-# DATABASE SERVICE
-# ===========================================================================
-
-
-class DatabaseService:
-    """SQLite-backed production schema for Streamlit."""
-
-    IMMUTABLE_TABLES = ("audit_events", "approval_records", "evidence_artifacts")
-
-    def __init__(self, db_path: str):
-        self.db_path = db_path
-        self._init_schema()
-
-    @contextmanager
-    def get_session(self) -> Iterable[sqlite3.Connection]:
-        conn = sqlite3.connect(self.db_path, timeout=30, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute("PRAGMA journal_mode = WAL")
-        try:
-            yield conn
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
-
-    def _init_schema(self) -> None:
-        with self.get_session() as conn:
-            conn.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS audit_events (
-                    event_id          TEXT PRIMARY KEY,
-                    timestamp         TEXT NOT NULL,
-                    event_type        TEXT NOT NULL,
-                    model_id          TEXT NOT NULL,
-                    actor             TEXT NOT NULL,
-                    action            TEXT NOT NULL,
-                    model_metrics     TEXT,
-                    digital_signature TEXT,
-                    tenant_id         TEXT NOT NULL,
-                    created_at        TEXT NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_audit_model_time
-                    ON audit_events (tenant_id, model_id, timestamp);
-
-                CREATE TABLE IF NOT EXISTS approval_records (
-                    record_id         TEXT PRIMARY KEY,
-                    model_id          TEXT NOT NULL,
-                    timestamp         TEXT NOT NULL,
-                    approver_role     TEXT NOT NULL,
-                    approver_name     TEXT NOT NULL,
-                    decision          TEXT NOT NULL,
-                    reason            TEXT,
-                    model_metrics     TEXT,
-                    digital_signature TEXT,
-                    parent_record_id  TEXT,
-                    tenant_id         TEXT NOT NULL,
-                    created_at        TEXT NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_approval_model_time
-                    ON approval_records (tenant_id, model_id, timestamp);
-
-                CREATE TABLE IF NOT EXISTS evidence_artifacts (
-                    artifact_id       TEXT PRIMARY KEY,
-                    model_id          TEXT NOT NULL,
-                    evidence_type     TEXT NOT NULL,
-                    content_hash      TEXT NOT NULL UNIQUE,
-                    timestamp         TEXT NOT NULL,
-                    created_by        TEXT NOT NULL,
-                    digital_signature TEXT NOT NULL,
-                    artifact_metadata TEXT,
-                    content_encrypted BLOB NOT NULL,
-                    tenant_id         TEXT NOT NULL,
-                    created_at        TEXT NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_evidence_model
-                    ON evidence_artifacts (tenant_id, model_id, timestamp);
-
-                CREATE TABLE IF NOT EXISTS policy_evaluations (
-                    evaluation_id     TEXT PRIMARY KEY,
-                    model_id          TEXT NOT NULL,
-                    policy_name       TEXT NOT NULL,
-                    risk_class        TEXT NOT NULL,
-                    compliant         INTEGER NOT NULL,
-                    violations        TEXT,
-                    requirements      TEXT,
-                    timestamp         TEXT NOT NULL,
-                    tenant_id         TEXT NOT NULL,
-                    created_at        TEXT NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_policy_eval_model
-                    ON policy_evaluations (tenant_id, model_id, timestamp);
-
-                CREATE TABLE IF NOT EXISTS model_versions (
-                    version_id             TEXT PRIMARY KEY,
-                    model_id               TEXT NOT NULL,
-                    created_at             TEXT NOT NULL,
-                    status                 TEXT NOT NULL,
-                    model_metrics          TEXT NOT NULL,
-                    risk_classification    TEXT NOT NULL,
-                    deployment_status      TEXT NOT NULL,
-                    model_artifact_hash    TEXT NOT NULL UNIQUE,
-                    created_by             TEXT NOT NULL,
-                    deployment_approved_by TEXT,
-                    deployment_approved_at TEXT,
-                    tenant_id              TEXT NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_model_tenant
-                    ON model_versions (tenant_id, model_id, created_at);
-                """
-            )
-
-            for table in self.IMMUTABLE_TABLES:
-                conn.executescript(
-                    f"""
-                    CREATE TRIGGER IF NOT EXISTS prevent_{table}_update
-                    BEFORE UPDATE ON {table}
-                    BEGIN
-                        SELECT RAISE(ABORT, '{table} is append-only');
-                    END;
-
-                    CREATE TRIGGER IF NOT EXISTS prevent_{table}_delete
-                    BEFORE DELETE ON {table}
-                    BEGIN
-                        SELECT RAISE(ABORT, '{table} is append-only');
-                    END;
-                    """
-                )
-
-    def count(self, table: str, tenant_id: Optional[str] = None) -> int:
-        if tenant_id:
-            query = f"SELECT COUNT(*) c FROM {table} WHERE tenant_id = ?"
-            params: Tuple[Any, ...] = (tenant_id,)
-        else:
-            query = f"SELECT COUNT(*) c FROM {table}"
-            params = ()
-        with self.get_session() as conn:
-            return int(conn.execute(query, params).fetchone()["c"])
-
-
-@st.cache_resource
-def get_db_service() -> DatabaseService:
-    return DatabaseService(Config.DB_PATH)
-
-
-# ===========================================================================
-# GOVERNANCE SERVICES
-# ===========================================================================
-
-
-class AuditService:
-    @staticmethod
-    def log_event(
-        conn: sqlite3.Connection,
-        event_type: str,
-        model_id: str,
-        actor: str,
-        action: str,
-        model_metrics: Optional[Dict[str, Any]] = None,
-        digital_signature: Optional[str] = None,
-        tenant_id: str = "default",
-    ) -> str:
-        event_id = str(uuid.uuid4())
-        timestamp = _utcnow().isoformat()
-        conn.execute(
-            """INSERT INTO audit_events
-               (event_id, timestamp, event_type, model_id, actor, action,
-                model_metrics, digital_signature, tenant_id, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                event_id,
-                timestamp,
-                event_type,
-                model_id,
-                actor,
-                action,
-                _json_dumps(model_metrics) if model_metrics else None,
-                digital_signature,
-                tenant_id,
-                timestamp,
-            ),
-        )
-        get_metrics().inc("aurexis_audit_events_stored_total")
-        return event_id
-
-    @staticmethod
-    def get_audit_trail(
-        conn: sqlite3.Connection,
-        model_id: str,
-        tenant_id: str = "default",
-        limit: int = 1000,
-    ) -> List[Dict[str, Any]]:
-        rows = conn.execute(
-            """SELECT * FROM audit_events
-               WHERE model_id = ? AND tenant_id = ?
-               ORDER BY timestamp DESC LIMIT ?""",
-            (model_id, tenant_id, limit),
-        ).fetchall()
-        return [dict(row) for row in rows]
-
-
-class PolicyEngineService:
-    POLICIES = {
-        "EU_AI_ACT": {
-            "name": "EU AI Act High-Risk",
-            "rules": {"fairness_max": 0.15, "drift_max": 0.25, "risk_score_max": 0.60},
-        },
-        "US_BANKING_SR11_7": {
-            "name": "SR 11-7 Model Risk Management",
-            "rules": {"fairness_max": 0.10, "drift_max": 0.20, "risk_score_max": 0.50},
-        },
-        "ISO_42001": {
-            "name": "ISO/IEC 42001",
-            "rules": {"fairness_max": 0.20, "drift_max": 0.30, "risk_score_max": 0.70},
-        },
-    }
-
-    @staticmethod
-    def evaluate(
-        conn: sqlite3.Connection,
-        model_id: str,
-        model_metrics: Dict[str, float],
-        risk_class: str,
-        policy_name: str,
-        tenant_id: str = "default",
-    ) -> Dict[str, Any]:
-        policy = PolicyEngineService.POLICIES.get(policy_name)
-        if not policy:
-            return {"compliant": True, "policy": policy_name, "policy_label": policy_name, "violations": []}
-
-        rules = policy["rules"]
-        checks = (
-            ("fairness", "fairness_threshold", "reject"),
-            ("drift", "drift_threshold", "escalate"),
-            ("risk_score", "risk_score_threshold", "escalate"),
-        )
-
-        violations = []
-        for metric, rule_name, action in checks:
-            threshold = rules.get(f"{metric}_max", 1.0)
-            value = float(model_metrics.get(metric, 0.0))
-            if value > threshold:
-                violations.append(
-                    {
-                        "rule": rule_name,
-                        "metric": metric,
-                        "value": round(value, 4),
-                        "threshold": threshold,
-                        "action": action,
-                    }
-                )
-
-        is_compliant = not violations
-        timestamp = _utcnow().isoformat()
-
-        conn.execute(
-            """INSERT INTO policy_evaluations
-               (evaluation_id, model_id, policy_name, risk_class, compliant,
-                violations, requirements, timestamp, tenant_id, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                str(uuid.uuid4()),
-                model_id,
-                policy_name,
-                risk_class,
-                int(is_compliant),
-                _json_dumps(violations),
-                _json_dumps({"human_oversight": not is_compliant, "risk_class": risk_class}),
-                timestamp,
-                tenant_id,
-                timestamp,
-            ),
-        )
-
-        get_metrics().inc(
-            "aurexis_model_evaluations_total",
-            labels={"policy": policy_name, "risk_class": risk_class},
-        )
-        if violations:
-            for violation in violations:
-                get_metrics().inc(
-                    "aurexis_policy_violations_total",
-                    labels={"policy": policy_name, "violation_type": violation["rule"]},
-                )
-
-        return {
-            "compliant": is_compliant,
-            "policy": policy_name,
-            "policy_label": policy["name"],
-            "violations": violations,
-            "requirements": {"human_oversight": not is_compliant},
-        }
-
-
-class EvidenceVaultService:
-    @staticmethod
-    def store_artifact(
-        conn: sqlite3.Connection,
-        crypto: CryptoSigner,
-        evidence_type: str,
-        content: str,
-        model_id: str,
-        created_by: str,
-        metadata: Optional[Dict[str, Any]] = None,
-        tenant_id: str = "default",
-    ) -> Dict[str, Any]:
-        artifact_id = str(uuid.uuid4())
-        timestamp = _utcnow().isoformat()
-        content_hash = hashlib.sha256(content.encode()).hexdigest()
-        document = f"{artifact_id}{timestamp}{content_hash}{tenant_id}"
-        signature = crypto.sign_document(document)
-        encrypted_content = crypto.encrypt_sensitive(content)
-
-        conn.execute(
-            """INSERT INTO evidence_artifacts
-               (artifact_id, model_id, evidence_type, content_hash, timestamp,
-                created_by, digital_signature, artifact_metadata,
-                content_encrypted, tenant_id, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                artifact_id,
-                model_id,
-                evidence_type,
-                content_hash,
-                timestamp,
-                created_by,
-                signature,
-                _json_dumps(metadata or {}),
-                encrypted_content.encode(),
-                tenant_id,
-                timestamp,
-            ),
-        )
-
-        get_metrics().inc("aurexis_evidence_artifacts_stored_total")
-        return {
-            "artifact_id": artifact_id,
-            "content_hash": content_hash,
-            "signature": signature[:32] + "...",
-            "timestamp": timestamp,
-        }
-
-    @staticmethod
-    def get_chain_of_custody(
-        conn: sqlite3.Connection,
-        model_id: str,
-        tenant_id: str = "default",
-    ) -> List[Dict[str, Any]]:
-        rows = conn.execute(
-            """SELECT artifact_id, evidence_type, content_hash, timestamp,
-                      created_by, digital_signature
-               FROM evidence_artifacts
-               WHERE model_id = ? AND tenant_id = ?
-               ORDER BY timestamp ASC""",
-            (model_id, tenant_id),
-        ).fetchall()
-        return [
-            {
-                "artifact_id": row["artifact_id"],
-                "evidence_type": row["evidence_type"],
-                "content_hash": row["content_hash"],
-                "timestamp": row["timestamp"],
-                "created_by": row["created_by"],
-                "signature": (row["digital_signature"] or "")[:32] + "...",
-            }
-            for row in rows
-        ]
-
-    @staticmethod
-    def get_artifact_content(
-        conn: sqlite3.Connection,
-        crypto: CryptoSigner,
-        artifact_id: str,
-        tenant_id: str = "default",
-    ) -> Optional[str]:
-        row = conn.execute(
-            """SELECT content_encrypted FROM evidence_artifacts
-               WHERE artifact_id = ? AND tenant_id = ?""",
-            (artifact_id, tenant_id),
-        ).fetchone()
-        if not row:
-            return None
-        return crypto.decrypt_sensitive(row["content_encrypted"].decode())
-
-
-class ApprovalWorkflowService:
-    ALLOWED_DECISIONS = {"approved", "rejected", "changes_requested", "escalated"}
-
-    @staticmethod
-    def submit_approval(
-        conn: sqlite3.Connection,
-        crypto: CryptoSigner,
-        model_id: str,
-        approver_role: str,
-        approver_name: str,
-        decision: str,
-        reason: str,
-        model_metrics: Optional[Dict[str, Any]] = None,
-        tenant_id: str = "default",
-    ) -> str:
-        if decision not in ApprovalWorkflowService.ALLOWED_DECISIONS:
-            raise ValueError(f"Unsupported decision: {decision}")
-
-        record_id = str(uuid.uuid4())
-        timestamp = _utcnow().isoformat()
-        document = f"{record_id}{decision}{approver_role}{approver_name}{tenant_id}"
-        signature = crypto.sign_document(document)
-
-        conn.execute(
-            """INSERT INTO approval_records
-               (record_id, model_id, timestamp, approver_role, approver_name,
-                decision, reason, model_metrics, digital_signature, tenant_id, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                record_id,
-                model_id,
-                timestamp,
-                approver_role,
-                approver_name,
-                decision,
-                reason,
-                _json_dumps(model_metrics or {}),
-                signature,
-                tenant_id,
-                timestamp,
-            ),
-        )
-        get_metrics().inc(
-            "aurexis_approvals_total",
-            labels={"role": approver_role, "decision": decision},
-        )
-        return record_id
-
-    @staticmethod
-    def get_approvals(
-        conn: sqlite3.Connection,
-        model_id: str,
-        tenant_id: str = "default",
-    ) -> List[Dict[str, Any]]:
-        rows = conn.execute(
-            """SELECT * FROM approval_records
-               WHERE model_id = ? AND tenant_id = ?
-               ORDER BY timestamp DESC""",
-            (model_id, tenant_id),
-        ).fetchall()
-        return [dict(row) for row in rows]
-
-
-class ModelRegistryService:
-    @staticmethod
-    def upsert_from_evaluation(
-        conn: sqlite3.Connection,
-        model_id: str,
-        model_metrics: Dict[str, Any],
-        risk_class: str,
-        created_by: str,
-        tenant_id: str,
-        compliant: bool,
-    ) -> str:
-        version_id = str(uuid.uuid4())
-        timestamp = _utcnow().isoformat()
-        artifact_basis = f"{tenant_id}:{model_id}:{timestamp}:{_json_dumps(model_metrics)}"
-        artifact_hash = hashlib.sha256(artifact_basis.encode()).hexdigest()
-        conn.execute(
-            """INSERT INTO model_versions
-               (version_id, model_id, created_at, status, model_metrics,
-                risk_classification, deployment_status, model_artifact_hash,
-                created_by, deployment_approved_by, deployment_approved_at, tenant_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                version_id,
-                model_id,
-                timestamp,
-                "evaluated",
-                _json_dumps(model_metrics),
-                risk_class,
-                "eligible" if compliant else "blocked",
-                artifact_hash,
-                created_by,
-                None,
-                None,
-                tenant_id,
-            ),
-        )
-        return version_id
-
-    @staticmethod
-    def recent(conn: sqlite3.Connection, tenant_id: str, limit: int = 50) -> List[Dict[str, Any]]:
-        rows = conn.execute(
-            """SELECT version_id, model_id, created_at, status, risk_classification,
-                      deployment_status, created_by, model_artifact_hash
-               FROM model_versions
-               WHERE tenant_id = ?
-               ORDER BY created_at DESC
-               LIMIT ?""",
-            (tenant_id, limit),
-        ).fetchall()
-        return [dict(row) for row in rows]
-
-
-# ===========================================================================
-# AUTHENTICATION, AUTHORIZATION, RATE LIMITING
-# ===========================================================================
-
-
-DEMO_USERS = {
-    "demo": {"password": "demo", "role": "Developer"},
-    "risk": {"password": "risk", "role": "Risk Officer"},
-    "compliance": {"password": "compliance", "role": "Compliance Officer"},
-    "approver": {"password": "approver", "role": "Deployment Approver"},
-    "admin": {"password": "admin", "role": "Platform Admin"},
-}
-
-APPROVAL_ROLES = {"Risk Officer", "Compliance Officer", "Deployment Approver", "Platform Admin"}
-
-
-def _b64url_encode(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
-
-
-def _b64url_decode(data: str) -> bytes:
-    return base64.urlsafe_b64decode(data + "=" * (-len(data) % 4))
-
-
-def create_jwt_token(user_id: str, role: str, tenant_id: str) -> str:
-    now = _utcnow()
-    payload = {
-        "user_id": user_id,
-        "role": role,
-        "tenant_id": tenant_id,
-        "exp": int((now + timedelta(hours=Config.JWT_EXPIRY_HOURS)).timestamp()),
-        "iat": int(now.timestamp()),
-    }
-    if _HAS_PYJWT:
-        token = _pyjwt.encode(payload, Config.JWT_SECRET, algorithm=Config.JWT_ALGORITHM)
-        return token.decode() if isinstance(token, bytes) else token
-
-    header = {"alg": "HS256", "typ": "JWT"}
-    segments = [
-        _b64url_encode(_json_dumps(header).encode()),
-        _b64url_encode(_json_dumps(payload).encode()),
-    ]
-    signing_input = ".".join(segments).encode()
-    signature = hmac.new(Config.JWT_SECRET.encode(), signing_input, hashlib.sha256).digest()
-    segments.append(_b64url_encode(signature))
-    return ".".join(segments)
-
-
-def verify_token(token: str) -> Optional[Dict[str, Any]]:
-    if _HAS_PYJWT:
-        try:
-            return _pyjwt.decode(token, Config.JWT_SECRET, algorithms=[Config.JWT_ALGORITHM])
-        except _pyjwt.ExpiredSignatureError:
-            st.error("Token expired. Please sign in again.")
-            return None
-        except _pyjwt.InvalidTokenError:
-            st.error("Invalid token.")
-            return None
-
-    try:
-        header_b64, payload_b64, signature_b64 = token.split(".")
-        signing_input = f"{header_b64}.{payload_b64}".encode()
-        expected = hmac.new(Config.JWT_SECRET.encode(), signing_input, hashlib.sha256).digest()
-        if not hmac.compare_digest(_b64url_decode(signature_b64), expected):
-            st.error("Invalid token.")
-            return None
-        payload = json.loads(_b64url_decode(payload_b64))
-        if dt.utcnow().timestamp() > float(payload.get("exp", 0)):
-            st.error("Token expired. Please sign in again.")
-            return None
-        return payload
-    except Exception:
-        st.error("Invalid token.")
-        return None
-
-
-class RateLimiter:
-    @staticmethod
-    def check(client_id: str, max_requests: int, period_seconds: int) -> bool:
-        bucket_key = f"rate_limit:{client_id}"
-        now = time.time()
-        if bucket_key not in st.session_state:
-            st.session_state[bucket_key] = []
-
-        bucket = [stamp for stamp in st.session_state[bucket_key] if now - stamp < period_seconds]
-        allowed = len(bucket) < max_requests
-        if allowed:
-            bucket.append(now)
-        st.session_state[bucket_key] = bucket
-        if not allowed:
-            get_metrics().inc("aurexis_rate_limited_total", labels={"client": client_id})
-        return allowed
-
-
-@dataclass
-class CurrentUser:
-    user_id: str
-    role: str
-    tenant_id: str
-
-    @classmethod
-    def from_session(cls) -> Optional["CurrentUser"]:
-        user = st.session_state.get("user")
-        if not user:
-            return None
-        return cls(user_id=user["user_id"], role=user["role"], tenant_id=user["tenant_id"])
-
-
-# ===========================================================================
-# STREAMLIT UI
-# ===========================================================================
-
-
+    import shap
+
+    _SHAP_AVAILABLE = True
+except Exception:  # pragma: no cover - optional dependency
+    shap = None
+    _SHAP_AVAILABLE = False
+
+try:
+    from fairlearn.metrics import demographic_parity_difference, equalized_odds_difference
+
+    _FAIRLEARN_AVAILABLE = True
+except Exception:  # pragma: no cover - optional dependency
+    demographic_parity_difference = None
+    equalized_odds_difference = None
+    _FAIRLEARN_AVAILABLE = False
+
+try:
+    from openai import OpenAI
+    from openai import RateLimitError as OpenAIRateLimitError
+
+    _OPENAI_AVAILABLE = True
+except Exception:  # pragma: no cover - optional dependency
+    OpenAI = None
+    OpenAIRateLimitError = Exception
+    _OPENAI_AVAILABLE = False
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# PAGE CONFIG
+# ══════════════════════════════════════════════════════════════════════════
 st.set_page_config(
-    page_title=Config.API_TITLE,
-    page_icon="🛡️",
+    page_title="Aurexis Systems — Version C",
+    page_icon="⚖️",
     layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+st.markdown(
+    """
+    <style>
+        .governance-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+            border-radius: 10px;
+            color: white;
+            text-align: center;
+            margin-bottom: 1rem;
+        }
+        .risk-high { color: #d32f2f; font-weight: bold; }
+        .risk-medium { color: #f57c00; font-weight: bold; }
+        .risk-low { color: #388e3c; font-weight: bold; }
+        .small-muted { color: #666; font-size: 0.85rem; }
+    </style>
+    """,
+    unsafe_allow_html=True,
 )
 
 
-def render_brand_header() -> None:
+# ══════════════════════════════════════════════════════════════════════════
+# CONSTANTS & CONFIGURATION
+# ══════════════════════════════════════════════════════════════════════════
+APP_VERSION = "Version C"
+APP_NAME = "AUREXIS SYSTEMS"
+ARTIFACT_ROOT = Path(os.getenv("AUREXIS_ARTIFACT_DIR", "/tmp/aurexis_version_c"))
+MODEL_CARD_DIR = ARTIFACT_ROOT / "model_cards"
+LOG_FILE = ARTIFACT_ROOT / "audit_log.jsonl"
+MODEL_CARD_DIR.mkdir(parents=True, exist_ok=True)
+
+GOVERNANCE_FRAMEWORKS = {
+    "NIST AI RMF": {
+        "Govern": "Risk Management Framework",
+        "Map": "Model Risk Monitoring",
+        "Measure": "Drift, Fairness, Explainability",
+        "Manage": "Governance Interventions",
+    },
+    "EU AI Act": {
+        "High-Risk": "Healthcare, Finance, Criminal Justice",
+        "Limited-Risk": "Emotion Recognition, Chatbots",
+        "Minimal-Risk": "Spam Filtering, General Classification",
+    },
+    "OECD AI Principles": {
+        "1": "Inclusive growth and sustainable development",
+        "2": "Human-centered values and fairness",
+        "3": "Transparency and explainability",
+        "4": "Robustness and security",
+        "5": "Accountability",
+    },
+    "UNESCO AI Ethics": {
+        "Human Rights": "Respect, protect, and promote human rights",
+        "Transparency": "Explainable and auditable AI decisions",
+        "Fairness": "Avoid unjust bias and discrimination",
+        "Accountability": "Clear ownership and redress mechanisms",
+    },
+    "ISO/IEC 42001": {
+        "Context": "Organization and interested parties",
+        "Planning": "Risk and opportunity mitigation",
+        "Support": "Resources, competence, awareness",
+        "Operation": "Control and monitoring",
+        "Evaluation": "Performance and compliance",
+    },
+}
+
+DOMAIN_RISK_MAPPING = {
+    "Healthcare": ("High Risk", "🔴", "Critical domain - direct patient impact"),
+    "Finance": ("High Risk", "🔴", "Critical domain - financial stability"),
+    "Criminal Justice": ("High Risk", "🔴", "Critical domain - civil rights impact"),
+    "Sports": ("Limited Risk", "🟡", "Non-critical but public facing"),
+    "Business": ("Limited Risk", "🟡", "Operational domain - monitoring recommended"),
+    "Emotion": ("Limited Risk", "🟡", "Emotion recognition - bias monitoring required"),
+    "General": ("Minimal Risk", "🟢", "Low-impact classification task"),
+}
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# UTILITY HELPERS
+# ══════════════════════════════════════════════════════════════════════════
+def utc_now_iso() -> str:
+    return dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+
+
+def clamp01(value: Any) -> float:
+    try:
+        numeric = float(value)
+    except Exception:
+        return 0.0
+    if not np.isfinite(numeric):
+        return 0.0
+    return max(0.0, min(1.0, numeric))
+
+
+def clean_pdf_text(value: Any) -> str:
+    """ReportLab's default fonts do not handle emoji reliably."""
+    text = str(value)
+    replacements = {
+        "✅": "PASS",
+        "⚠️": "WARNING",
+        "⚠": "WARNING",
+        "❌": "FAIL",
+        "🔴": "HIGH",
+        "🟡": "MEDIUM",
+        "🟢": "LOW",
+    }
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    return text
+
+
+def safe_json_default(value: Any) -> Any:
+    if isinstance(value, (np.integer, np.floating)):
+        return value.item()
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    return str(value)
+
+
+def reset_chat() -> None:
+    st.session_state["messages"] = []
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# AUDIT & LOGGING SYSTEM
+# ══════════════════════════════════════════════════════════════════════════
+def log_governance_event(
+    event_type: str,
+    model_name: str,
+    metrics: Dict[str, Any],
+    jurisdiction: str,
+    action: str = "",
+    risk_class: str = "",
+    framework: str = "",
+) -> None:
+    record = {
+        "timestamp": utc_now_iso(),
+        "event_type": event_type,
+        "model_name": model_name,
+        "metrics": {
+            "drift": round(float(metrics.get("drift", 0)), 4),
+            "fairness": round(float(metrics.get("fairness", 0)), 4),
+            "demographic_parity": round(float(metrics.get("dp", 0)), 4),
+            "equalized_odds": round(float(metrics.get("eo", 0)), 4),
+            "stability": round(float(metrics.get("stability", 0)), 4),
+            "risk_score": round(float(metrics.get("risk_score", 0)), 4),
+        },
+        "governance": {
+            "jurisdiction": jurisdiction,
+            "action": action,
+            "risk_classification": risk_class,
+            "framework": framework,
+        },
+    }
+    try:
+        with LOG_FILE.open("a", encoding="utf-8") as file:
+            file.write(json.dumps(record, default=safe_json_default) + "\n")
+    except Exception as exc:
+        st.warning(f"Audit log write error: {exc}")
+
+
+def load_audit_logs() -> List[Dict[str, Any]]:
+    if not LOG_FILE.exists():
+        return []
+    logs: List[Dict[str, Any]] = []
+    try:
+        with LOG_FILE.open("r", encoding="utf-8") as file:
+            for line in file:
+                try:
+                    logs.append(json.loads(line))
+                except Exception:
+                    continue
+    except Exception:
+        return []
+    return logs
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# GOVERNANCE METRICS
+# ══════════════════════════════════════════════════════════════════════════
+def compute_drift_comprehensive(X_train: pd.DataFrame, X_test: pd.DataFrame) -> Dict[str, float]:
+    try:
+        num_cols = X_train.select_dtypes(include=[np.number]).columns
+        if len(num_cols) == 0 or X_train.empty or X_test.empty:
+            return {"wasserstein": 0.0, "psi": 0.0, "ks": 0.0, "overall": 0.0}
+
+        wasserstein_dists: List[float] = []
+        psi_scores: List[float] = []
+        ks_stats: List[float] = []
+
+        for col in num_cols:
+            x1 = pd.to_numeric(X_train[col], errors="coerce").replace([np.inf, -np.inf], np.nan).dropna().to_numpy()
+            x2 = pd.to_numeric(X_test[col], errors="coerce").replace([np.inf, -np.inf], np.nan).dropna().to_numpy()
+            if len(x1) < 2 or len(x2) < 2:
+                continue
+
+            x1_norm = (x1 - np.mean(x1)) / (np.std(x1) + 1e-6)
+            x2_norm = (x2 - np.mean(x2)) / (np.std(x2) + 1e-6)
+            wasserstein_dists.append(float(wasserstein_distance(x1_norm, x2_norm)))
+
+            bins = np.histogram_bin_edges(np.concatenate([x1, x2]), bins=10)
+            if len(np.unique(bins)) > 1:
+                p_train = np.histogram(x1, bins=bins)[0] / max(len(x1), 1)
+                p_test = np.histogram(x2, bins=bins)[0] / max(len(x2), 1)
+                psi = np.sum((p_test - p_train) * np.log((p_test + 1e-10) / (p_train + 1e-10)))
+                psi_scores.append(float(abs(psi)))
+
+            ks_stat, _ = ks_2samp(x1, x2)
+            ks_stats.append(float(ks_stat))
+
+        if not wasserstein_dists:
+            return {"wasserstein": 0.0, "psi": 0.0, "ks": 0.0, "overall": 0.0}
+
+        wasserstein_score = float(np.mean(wasserstein_dists))
+        psi_score = float(np.mean(psi_scores)) if psi_scores else 0.0
+        ks_score = float(np.mean(ks_stats)) if ks_stats else 0.0
+
+        # Normalize composite so dashboard thresholds are intuitive.
+        overall = float(np.mean([clamp01(wasserstein_score), clamp01(psi_score), clamp01(ks_score)]))
+        return {
+            "wasserstein": wasserstein_score,
+            "psi": psi_score,
+            "ks": ks_score,
+            "overall": clamp01(overall),
+        }
+    except Exception as exc:
+        st.warning(f"Drift computation error: {exc}")
+        return {"wasserstein": 0.0, "psi": 0.0, "ks": 0.0, "overall": 0.0}
+
+
+def compute_fairness_comprehensive(
+    preds: np.ndarray,
+    y_true: pd.Series,
+    sensitive_features: Optional[pd.Series] = None,
+    task: str = "classification",
+) -> Dict[str, float]:
+    try:
+        preds_series = pd.Series(preds).reset_index(drop=True)
+        y_series = pd.Series(y_true).reset_index(drop=True)
+
+        if task == "classification":
+            basic_fairness = abs(float(preds_series.mean()) - float(y_series.mean()))
+        else:
+            scale = float(y_series.max() - y_series.min()) or 1.0
+            basic_fairness = abs(float(preds_series.mean()) - float(y_series.mean())) / scale
+
+        result: Dict[str, float] = {"basic": clamp01(basic_fairness)}
+
+        if (
+            task == "classification"
+            and _FAIRLEARN_AVAILABLE
+            and sensitive_features is not None
+            and len(sensitive_features) == len(y_series)
+        ):
+            try:
+                sensitive = pd.Series(sensitive_features).reset_index(drop=True)
+                dp = demographic_parity_difference(y_series, preds_series, sensitive_features=sensitive)
+                eo = equalized_odds_difference(y_series, preds_series, sensitive_features=sensitive)
+                result["demographic_parity"] = clamp01(abs(dp))
+                result["equalized_odds"] = clamp01(abs(eo))
+            except Exception as exc:
+                st.warning(f"Fairlearn metric error: {exc}")
+
+        result["composite"] = clamp01(float(np.mean(list(result.values()))))
+        return result
+    except Exception as exc:
+        st.warning(f"Fairness computation error: {exc}")
+        return {"basic": 0.0, "composite": 0.0}
+
+
+def compute_model_uncertainty(model: Any, X: pd.DataFrame, task: str) -> float:
+    try:
+        if hasattr(model, "estimators_"):
+            tree_preds = np.array([est.predict(X) for est in model.estimators_])
+            variance = float(np.mean(np.var(tree_preds, axis=0)))
+            if task == "regression":
+                scale = float(np.var(model.predict(X))) + 1e-6
+                return clamp01(variance / scale)
+            return clamp01(variance)
+        return 0.0
+    except Exception:
+        return 0.0
+
+
+def compute_risk_score(drift: float, fairness: float, uncertainty: float) -> float:
+    return clamp01(drift * 0.35 + fairness * 0.35 + uncertainty * 0.30)
+
+
+def system_stability_score(drift: float, fairness: float) -> float:
+    return clamp01((1 - drift) * 0.5 + (1 - fairness) * 0.5)
+
+
+def classify_ai_risk_level(domain: str) -> Dict[str, Any]:
+    risk_class, emoji, reason = DOMAIN_RISK_MAPPING.get(domain, ("Minimal Risk", "🟢", "Unknown domain"))
+    return {
+        "classification": risk_class,
+        "emoji": emoji,
+        "reasoning": reason,
+        "requires_audit": risk_class == "High Risk",
+        "monitoring_level": "Continuous" if risk_class == "High Risk" else "Periodic",
+    }
+
+
+def get_fairness_status(fairness_score: float) -> Tuple[str, str]:
+    if fairness_score < 0.1:
+        return "Acceptable", "🟢"
+    if fairness_score < 0.2:
+        return "Warning", "🟡"
+    return "Critical", "🔴"
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# MODEL CARD GENERATION
+# ══════════════════════════════════════════════════════════════════════════
+def create_model_card(
+    model: Any,
+    X_train: pd.DataFrame,
+    y_train: pd.Series,
+    metrics: Dict[str, float],
+    jurisdiction: str,
+    domain: str,
+    risk_class: Dict[str, Any],
+) -> Tuple[Dict[str, Any], str]:
+    model_id = hashlib.sha256(
+        f"{model.__class__.__name__}_{utc_now_iso()}_{domain}".encode()
+    ).hexdigest()[:10]
+
+    card = {
+        "model_id": model_id,
+        "metadata": {
+            "name": f"{model.__class__.__name__}_{model_id}",
+            "type": model.__class__.__name__,
+            "version": "1.0",
+            "created": utc_now_iso(),
+            "domain": domain,
+            "jurisdiction": jurisdiction,
+        },
+        "governance": {
+            "ai_risk_classification": risk_class["classification"],
+            "requires_human_oversight": risk_class["requires_audit"],
+            "monitoring_level": risk_class["monitoring_level"],
+            "governance_frameworks": list(GOVERNANCE_FRAMEWORKS.keys()),
+        },
+        "training_data": {
+            "size": int(len(X_train)),
+            "features": int(len(X_train.columns)),
+            "feature_names": list(X_train.columns),
+            "target_distribution": {
+                str(k): int(v) for k, v in pd.Series(y_train).value_counts(dropna=False).items()
+            },
+        },
+        "model_metrics": {
+            "drift": metrics.get("drift", 0),
+            "fairness": metrics.get("fairness", 0),
+            "stability": metrics.get("stability", 0),
+            "risk_score": metrics.get("risk_score", 0),
+            "uncertainty": metrics.get("uncertainty", 0),
+        },
+        "compliance": {
+            "nist_ai_rmf": "Compliant" if metrics.get("risk_score", 0) < 0.6 else "Review Required",
+            "eu_ai_act": "High-Risk" if risk_class["classification"] == "High Risk" else "Lower-Risk",
+            "iso_42001": "Requires Assessment",
+            "audit_timestamp": utc_now_iso(),
+        },
+    }
+
+    card_path = MODEL_CARD_DIR / f"{model_id}_card.json"
+    try:
+        with card_path.open("w", encoding="utf-8") as file:
+            json.dump(card, file, indent=2, default=safe_json_default)
+    except Exception as exc:
+        st.warning(f"Model card save error: {exc}")
+
+    return card, model_id
+
+
+def load_model_cards() -> List[Dict[str, Any]]:
+    cards: List[Dict[str, Any]] = []
+    try:
+        for path in sorted(MODEL_CARD_DIR.glob("*_card.json")):
+            with path.open("r", encoding="utf-8") as file:
+                cards.append(json.load(file))
+    except Exception:
+        return []
+    return cards
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# EXPLAINABILITY ENGINE
+# ══════════════════════════════════════════════════════════════════════════
+def generate_explainability_report(model: Any, X_test: pd.DataFrame) -> Optional[Dict[str, Any]]:
+    if not _SHAP_AVAILABLE:
+        return None
+
+    try:
+        sample = X_test.head(min(100, len(X_test)))
+        explainer = shap.TreeExplainer(model)
+        shap_values = explainer.shap_values(sample)
+
+        if isinstance(shap_values, list):
+            shap_values_main = shap_values[1] if len(shap_values) > 1 else shap_values[0]
+        elif getattr(shap_values, "ndim", 0) == 3:
+            shap_values_main = shap_values[:, :, min(1, shap_values.shape[2] - 1)]
+        else:
+            shap_values_main = shap_values
+
+        feature_importance = np.abs(shap_values_main).mean(axis=0)
+        importance_df = pd.DataFrame(
+            {"Feature": sample.columns, "SHAP_Importance": feature_importance}
+        ).sort_values("SHAP_Importance", ascending=False)
+
+        return {
+            "feature_importance": importance_df,
+            "mean_abs_shap": float(np.abs(shap_values_main).mean()),
+        }
+    except Exception as exc:
+        st.warning(f"SHAP computation error: {exc}")
+        return None
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# GOVERNANCE INTERVENTION ENGINE
+# ══════════════════════════════════════════════════════════════════════════
+def governance_intervention(
+    model: Any,
+    metrics: Dict[str, float],
+    domain: str,
+    jurisdiction: str,
+    X_train: Optional[pd.DataFrame] = None,
+    y_train: Optional[pd.Series] = None,
+) -> Dict[str, Any]:
+    risk_class = classify_ai_risk_level(domain)
+    drift = metrics.get("drift", 0)
+    fairness = metrics.get("fairness", 0)
+    risk_score = metrics.get("risk_score", 0)
+
+    log_governance_event(
+        "governance_check",
+        model.__class__.__name__,
+        metrics,
+        jurisdiction,
+        risk_class=risk_class["classification"],
+    )
+
+    messages: List[Tuple[str, str]] = []
+    actions: List[str] = []
+
+    if risk_class["requires_audit"]:
+        messages.append(("warning", f"{risk_class['emoji']} {risk_class['classification']} domain - enhanced monitoring required"))
+        actions.append("continuous_monitoring")
+
+    if drift > 0.3:
+        messages.append(("warning", "Data drift detected - retraining recommended"))
+        actions.append("retrain")
+        if model is not None and X_train is not None and y_train is not None:
+            try:
+                model.fit(X_train, y_train)
+                messages.append(("success", "Model retrained on current data"))
+                actions.append("retrain_complete")
+            except Exception as exc:
+                messages.append(("error", f"Retraining failed: {exc}"))
+
+    if fairness > 0.15:
+        messages.append(("warning", "Fairness gap detected - bias mitigation recommended"))
+        actions.append("debias")
+
+    if risk_score > 0.6:
+        messages.append(("error", "High risk score - human review required"))
+        actions.append("escalate")
+
+    if not actions:
+        messages.append(("success", "System stable - governance thresholds are within acceptable range"))
+        actions.append("stable")
+
+    log_governance_event(
+        "governance_action",
+        model.__class__.__name__,
+        metrics,
+        jurisdiction,
+        action=",".join(actions),
+        risk_class=risk_class["classification"],
+    )
+
+    return {
+        "risk_class": risk_class,
+        "actions": actions,
+        "messages": messages,
+        "primary_action": actions[0] if actions else "stable",
+    }
+
+
+def render_governance_messages(gov_result: Dict[str, Any]) -> None:
+    risk_class = gov_result["risk_class"]
+    border_color = "#d32f2f" if risk_class["requires_audit"] else "#388e3c"
+    bg_color = "#ffebee" if risk_class["requires_audit"] else "#e8f5e9"
     st.markdown(
-        """
-        <style>
-        .aurexis-hero {
-            border: 1px solid rgba(120, 144, 180, .35);
-            border-radius: 18px;
-            padding: 1.4rem 1.6rem;
-            background: linear-gradient(135deg, rgba(7, 20, 45, .96), rgba(20, 52, 86, .90));
-            color: white;
-            margin-bottom: 1rem;
-        }
-        .aurexis-hero h1 { margin: 0; font-size: 1.8rem; letter-spacing: .02em; }
-        .aurexis-hero p { margin: .35rem 0 0 0; color: rgba(255,255,255,.78); }
-        .status-pill {
-            display: inline-block;
-            padding: .18rem .55rem;
-            border-radius: 999px;
-            background: rgba(42, 157, 143, .20);
-            border: 1px solid rgba(42, 157, 143, .50);
-            margin-right: .35rem;
-            font-size: .82rem;
-        }
-        </style>
-        <div class="aurexis-hero">
-            <h1>AUREXIS SYSTEMS — PRODUCTION v5.5.1 (ENTERPRISE-HARDENED)</h1>
-            <p>Distributed AI Governance Operating System · Streamlit operational console</p>
-            <p>
-                <span class="status-pill">SQLite WORM audit</span>
-                <span class="status-pill">JWT + RBAC</span>
-                <span class="status-pill">Policy engine</span>
-                <span class="status-pill">Evidence vault</span>
-                <span class="status-pill">Prometheus-style metrics</span>
-            </p>
+        f"""
+        <div style="background-color: {bg_color}; border-left: 5px solid {border_color}; padding: 12px; border-radius: 4px;">
+        <strong>{risk_class['emoji']} AI Risk Classification: {risk_class['classification']}</strong><br>
+        {risk_class['reasoning']}<br>
+        Monitoring Level: {risk_class['monitoring_level']}
         </div>
         """,
         unsafe_allow_html=True,
     )
+    st.markdown("---")
 
-
-def login_view() -> None:
-    render_brand_header()
-    st.subheader("Sign in")
-
-    with st.form("login_form"):
-        col1, col2, col3 = st.columns([1, 1, 1])
-        username = col1.text_input("Username", value="demo")
-        password = col2.text_input("Password", value="demo", type="password")
-        tenant_id = col3.text_input("Tenant ID", value="default")
-        submitted = st.form_submit_button("Sign in", type="primary")
-
-    if submitted:
-        user = DEMO_USERS.get(username)
-        if user and hmac.compare_digest(user["password"], password):
-            token = create_jwt_token(username, user["role"], tenant_id)
-            st.session_state["token"] = token
-            st.session_state["user"] = {
-                "user_id": username,
-                "role": user["role"],
-                "tenant_id": tenant_id,
-            }
-            get_metrics().inc("aurexis_logins_total", labels={"role": user["role"]})
-            st.rerun()
+    for level, text in gov_result["messages"]:
+        if level == "warning":
+            st.warning(text)
+        elif level == "success":
+            st.success(text)
+        elif level == "error":
+            st.error(text)
         else:
-            st.error("Invalid credentials.")
-
-    with st.expander("Demo accounts"):
-        st.markdown(
-            "| Username | Password | Role |\n"
-            "|---|---|---|\n"
-            "| `demo` | `demo` | Developer |\n"
-            "| `risk` | `risk` | Risk Officer |\n"
-            "| `compliance` | `compliance` | Compliance Officer |\n"
-            "| `approver` | `approver` | Deployment Approver |\n"
-            "| `admin` | `admin` | Platform Admin |"
-        )
+            st.info(text)
 
 
-def sidebar(user: CurrentUser) -> str:
-    with st.sidebar:
-        st.markdown("### 🛡️ Aurexis Systems")
-        st.markdown(f"**User:** {user.user_id}")
-        st.markdown(f"**Role:** {user.role}")
-        st.markdown(f"**Tenant:** {user.tenant_id}")
-        st.divider()
-        page = st.radio(
-            "Navigation",
-            [
-                "Dashboard",
-                "Evaluate Model",
-                "Submit Approval",
-                "Upload Evidence",
-                "Audit Trail",
-                "Chain of Custody",
-                "Model Registry",
-                "Metrics",
-                "System Health",
-            ],
-        )
-        st.divider()
-        crypto_health = get_crypto_service().health()
-        st.caption(f"Crypto: {crypto_health['signing']} + {crypto_health['encryption']}")
-        st.caption(f"Storage: {Config.DATABASE_PROFILE}")
-        if st.button("Sign out"):
-            for key in ("token", "user"):
-                st.session_state.pop(key, None)
-            st.rerun()
-    return page
-
-
-def _status_badge(compliant: bool) -> str:
-    return "✅ Compliant" if compliant else "❌ Violation"
-
-
-def dashboard_view(user: CurrentUser) -> None:
-    st.header("Governance Dashboard")
-    st.caption("Tenant-isolated operational view of governance activity.")
-
-    db = get_db_service()
-    metrics = get_metrics()
-
-    audit_count = db.count("audit_events", user.tenant_id)
-    eval_count = db.count("policy_evaluations", user.tenant_id)
-    evidence_count = db.count("evidence_artifacts", user.tenant_id)
-    approval_count = db.count("approval_records", user.tenant_id)
-    model_count = db.count("model_versions", user.tenant_id)
-
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Audit Events", audit_count)
-    c2.metric("Evaluations", eval_count)
-    c3.metric("Evidence", evidence_count)
-    c4.metric("Approvals", approval_count)
-    c5.metric("Model Versions", model_count)
-
-    with db.get_session() as conn:
-        violation_count = conn.execute(
-            """SELECT COUNT(*) c FROM policy_evaluations
-               WHERE compliant = 0 AND tenant_id = ?""",
-            (user.tenant_id,),
-        ).fetchone()["c"]
-        rows = conn.execute(
-            """SELECT model_id, policy_name, risk_class, compliant, timestamp
-               FROM policy_evaluations
-               WHERE tenant_id = ?
-               ORDER BY timestamp DESC
-               LIMIT 20""",
-            (user.tenant_id,),
-        ).fetchall()
-
-    st.divider()
-    c6, c7 = st.columns(2)
-    c6.metric("Non-Compliant Evaluations", int(violation_count))
-    c7.metric("Policy Violations (session)", sum(v for k, v in metrics.snapshot().items() if "policy_violations" in k))
-
-    st.subheader("Recent Policy Evaluations")
-    if rows:
-        df = pd.DataFrame([dict(row) for row in rows])
-        df["compliant"] = df["compliant"].map({1: "✅ Compliant", 0: "❌ Violation"})
-        st.dataframe(df, use_container_width=True, hide_index=True)
-    else:
-        st.info("No evaluations yet. Run one from the Evaluate Model page.")
-
-
-def evaluate_view(user: CurrentUser) -> None:
-    st.header("Evaluate Model")
-    st.caption("Run model metrics against declarative governance controls.")
-
-    with st.form("eval_form"):
-        model_id = st.text_input("Model ID", value="credit-risk-v1")
-        policy_name = st.selectbox(
-            "Policy",
-            list(PolicyEngineService.POLICIES.keys()),
-            format_func=lambda key: PolicyEngineService.POLICIES[key]["name"],
-        )
-        risk_class = st.selectbox("Risk Class", ["high", "limited", "minimal"])
-        c1, c2 = st.columns(2)
-        drift = c1.slider("Drift", 0.0, 1.0, 0.10, 0.01)
-        fairness = c2.slider("Fairness Gap", 0.0, 1.0, 0.08, 0.01)
-        stability = c1.slider("Stability", 0.0, 1.0, 0.90, 0.01)
-        risk_score = c2.slider("Risk Score", 0.0, 1.0, 0.40, 0.01)
-        uncertainty = c1.slider("Uncertainty", 0.0, 1.0, 0.20, 0.01)
-        submitted = st.form_submit_button("Evaluate", type="primary")
-
-    if not submitted:
-        return
-
-    if not RateLimiter.check(user.user_id, Config.RATE_LIMIT_REQUESTS, Config.RATE_LIMIT_PERIOD):
-        st.error("Rate limit exceeded. Please try again later.")
-        return
-
-    model_metrics = {
-        "drift": drift,
-        "fairness": fairness,
-        "stability": stability,
-        "risk_score": risk_score,
-        "uncertainty": uncertainty,
-    }
-
-    db = get_db_service()
-    crypto = get_crypto_service()
-    with instrument("aurexis_policy_evaluation_duration_seconds", {"policy": policy_name}):
-        with db.get_session() as conn:
-            result = PolicyEngineService.evaluate(
-                conn,
-                model_id,
-                model_metrics,
-                risk_class,
-                policy_name,
-                user.tenant_id,
-            )
-            signature = crypto.sign_document(f"{model_id}{policy_name}{_json_dumps(model_metrics)}")
-            version_id = ModelRegistryService.upsert_from_evaluation(
-                conn,
-                model_id,
-                model_metrics,
-                risk_class,
-                user.user_id,
-                user.tenant_id,
-                bool(result["compliant"]),
-            )
-            AuditService.log_event(
-                conn,
-                "model_evaluated",
-                model_id,
-                user.user_id,
-                f"policy_evaluation_{policy_name}",
-                model_metrics,
-                digital_signature=signature,
-                tenant_id=user.tenant_id,
-            )
-
-    if result["compliant"]:
-        st.success(f"{_status_badge(True)} with {result['policy_label']} · version `{version_id}`")
-    else:
-        st.error(f"{_status_badge(False)}: {len(result['violations'])} violation(s) against {result['policy_label']}")
-        st.dataframe(pd.DataFrame(result["violations"]), use_container_width=True, hide_index=True)
-        st.warning("Deployment status is blocked until required human oversight is completed.")
-
-
-def approval_view(user: CurrentUser) -> None:
-    st.header("Submit Approval")
-    if user.role not in APPROVAL_ROLES:
-        st.warning(
-            f"Your role ({user.role}) cannot submit approvals. "
-            "Sign in as risk, compliance, approver, or admin."
-        )
-        return
-
-    with st.form("approval_form"):
-        model_id = st.text_input("Model ID", value="credit-risk-v1")
-        decision = st.selectbox("Decision", sorted(ApprovalWorkflowService.ALLOWED_DECISIONS))
-        reason = st.text_area("Reason (min 10 chars)", value="Reviewed metrics and governance evidence.")
-        submitted = st.form_submit_button("Submit Decision", type="primary")
-
-    if submitted:
-        if len(reason.strip()) < 10:
-            st.error("Reason must be at least 10 characters.")
-            return
-
-        db = get_db_service()
-        crypto = get_crypto_service()
-        with instrument("aurexis_approval_duration_seconds", {"decision": decision}):
-            with db.get_session() as conn:
-                record_id = ApprovalWorkflowService.submit_approval(
-                    conn,
-                    crypto,
-                    model_id,
-                    user.role,
-                    user.user_id,
-                    decision,
-                    reason,
-                    {},
-                    user.tenant_id,
-                )
-                AuditService.log_event(
-                    conn,
-                    "approval_submitted",
-                    model_id,
-                    user.user_id,
-                    f"decision_{decision}",
-                    tenant_id=user.tenant_id,
-                )
-        st.success(f"Decision recorded · record_id `{record_id}` · {decision}")
-
-    st.divider()
-    st.subheader("Approval History")
-    model_lookup = st.text_input("Look up approvals for Model ID", value="credit-risk-v1")
-    if model_lookup:
-        db = get_db_service()
-        with db.get_session() as conn:
-            rows = ApprovalWorkflowService.get_approvals(conn, model_lookup, user.tenant_id)
-        if rows:
-            df = pd.DataFrame(rows)[["timestamp", "approver_role", "approver_name", "decision", "reason"]]
-            st.dataframe(df, use_container_width=True, hide_index=True)
-        else:
-            st.info("No approvals found for this model.")
-
-
-def evidence_view(user: CurrentUser) -> None:
-    st.header("Upload Evidence")
-    crypto_health = get_crypto_service().health()
-    st.caption(f"Artifacts are SHA-256 hashed, {crypto_health['signing']} signed, and {crypto_health['encryption']} encrypted.")
-
-    with st.form("evidence_form"):
-        model_id = st.text_input("Model ID", value="credit-risk-v1")
-        evidence_type = st.selectbox(
-            "Evidence Type",
-            ["model_card", "test_report", "fairness_audit", "data_lineage", "validation_report", "other"],
-        )
-        content = st.text_area("Content", value="Evidence payload...", height=160)
-        submitted = st.form_submit_button("Upload", type="primary")
-
-    if not submitted:
-        return
-
-    if not content.strip():
-        st.error("Content cannot be empty.")
-        return
-
-    db = get_db_service()
-    crypto = get_crypto_service()
+# ══════════════════════════════════════════════════════════════════════════
+# PDF REPORT GENERATION
+# ══════════════════════════════════════════════════════════════════════════
+def generate_comprehensive_pdf_report(
+    metrics: Dict[str, float],
+    risk_class: Dict[str, Any],
+    model_card: Dict[str, Any],
+    explainability: Optional[Dict[str, Any]] = None,
+    filename: str = "governance_report.pdf",
+) -> Optional[Path]:
+    file_path = ARTIFACT_ROOT / filename
     try:
-        with instrument("aurexis_evidence_upload_duration_seconds", {"evidence_type": evidence_type}):
-            with db.get_session() as conn:
-                result = EvidenceVaultService.store_artifact(
-                    conn,
-                    crypto,
-                    evidence_type,
-                    content,
-                    model_id,
-                    user.user_id,
-                    {"source": "streamlit-ui", "classification": "governance-evidence"},
-                    user.tenant_id,
-                )
-                AuditService.log_event(
-                    conn,
-                    "evidence_uploaded",
-                    model_id,
-                    user.user_id,
-                    f"evidence_{evidence_type}",
-                    tenant_id=user.tenant_id,
-                )
-        st.success("Evidence stored securely.")
-        st.json(result)
-    except sqlite3.IntegrityError:
-        st.warning("Identical content already exists in the evidence vault.")
+        doc = SimpleDocTemplate(str(file_path), pagesize=(8.5 * inch, 11 * inch), topMargin=0.5 * inch)
+        styles = getSampleStyleSheet()
+        content: List[Any] = []
 
-
-def audit_trail_view(user: CurrentUser) -> None:
-    st.header("Audit Trail")
-    st.caption("Immutable, append-only event log.")
-    model_id = st.text_input("Model ID", value="credit-risk-v1")
-    if not model_id:
-        return
-
-    db = get_db_service()
-    with db.get_session() as conn:
-        trail = AuditService.get_audit_trail(conn, model_id, user.tenant_id)
-    if trail:
-        df = pd.DataFrame(trail)[["timestamp", "event_type", "actor", "action", "digital_signature"]]
-        st.dataframe(df, use_container_width=True, hide_index=True)
-    else:
-        st.info("No audit events for this model yet.")
-
-
-def chain_of_custody_view(user: CurrentUser) -> None:
-    st.header("Chain of Custody")
-    st.caption("Ordered evidence lineage with cryptographic proof.")
-    model_id = st.text_input("Model ID", value="credit-risk-v1")
-    if not model_id:
-        return
-
-    db = get_db_service()
-    crypto = get_crypto_service()
-    with db.get_session() as conn:
-        chain = EvidenceVaultService.get_chain_of_custody(conn, model_id, user.tenant_id)
-
-    if not chain:
-        st.info("No evidence artifacts for this model yet.")
-        return
-
-    st.dataframe(pd.DataFrame(chain), use_container_width=True, hide_index=True)
-    artifact_id = st.selectbox("Decrypt evidence artifact", [""] + [row["artifact_id"] for row in chain])
-    if artifact_id:
-        with db.get_session() as conn:
-            try:
-                content = EvidenceVaultService.get_artifact_content(conn, crypto, artifact_id, user.tenant_id)
-            except InvalidToken:
-                st.error("Unable to decrypt artifact with the active encryption key.")
-                return
-        if content is None:
-            st.error("Artifact not found for this tenant.")
-        else:
-            st.text_area("Decrypted content", content, height=150)
-
-
-def model_registry_view(user: CurrentUser) -> None:
-    st.header("Model Registry")
-    st.caption("Evaluation-created model versions and deployment eligibility.")
-    db = get_db_service()
-    with db.get_session() as conn:
-        rows = ModelRegistryService.recent(conn, user.tenant_id)
-    if not rows:
-        st.info("No model versions yet. Evaluations will appear here.")
-        return
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-
-
-def metrics_view(user: CurrentUser) -> None:
-    st.header("Metrics")
-    st.caption("In-process Prometheus-style counters for this Streamlit worker.")
-    snapshot = get_metrics().snapshot()
-    if snapshot:
-        st.dataframe(
-            pd.DataFrame([{"metric": key, "value": value} for key, value in snapshot.items()]),
-            use_container_width=True,
-            hide_index=True,
+        title_style = ParagraphStyle(
+            "CustomTitle",
+            parent=styles["Heading1"],
+            fontSize=24,
+            textColor=colors.HexColor("#667eea"),
+            spaceAfter=30,
+            alignment=1,
         )
-    else:
-        st.info("No counters recorded in this session yet.")
 
-    latencies = get_metrics().latency_snapshot()
-    st.subheader("Latency Samples")
-    if latencies:
-        st.dataframe(pd.DataFrame(latencies), use_container_width=True, hide_index=True)
-    else:
-        st.info("No latency samples recorded yet.")
+        content.append(Paragraph("AUREXIS SYSTEMS", title_style))
+        content.append(Paragraph("AI Governance Risk Report - Version C", styles["Heading2"]))
+        content.append(Spacer(1, 12))
 
+        content.append(Paragraph("Executive Summary", styles["Heading2"]))
+        content.append(
+            Paragraph(
+                f"This report provides a governance assessment of "
+                f"{clean_pdf_text(model_card.get('metadata', {}).get('name', 'Model'))} "
+                "based on NIST AI RMF, EU AI Act, OECD, UNESCO, and ISO/IEC 42001 frameworks.",
+                styles["Normal"],
+            )
+        )
+        content.append(Spacer(1, 12))
 
-def system_health_view(user: CurrentUser) -> None:
-    st.header("System Health")
-    st.caption("Streamlit-compatible status for production-hardened services.")
-    db = get_db_service()
-    crypto = get_crypto_service()
+        content.append(Paragraph("AI Risk Classification", styles["Heading2"]))
+        content.append(
+            Paragraph(
+                f"<b>Classification:</b> {clean_pdf_text(risk_class.get('classification', 'N/A'))}<br/>"
+                f"<b>Reasoning:</b> {clean_pdf_text(risk_class.get('reasoning', 'N/A'))}<br/>"
+                f"<b>Monitoring Level:</b> {clean_pdf_text(risk_class.get('monitoring_level', 'N/A'))}",
+                styles["Normal"],
+            )
+        )
+        content.append(Spacer(1, 12))
 
-    checks = []
-    try:
-        with db.get_session() as conn:
-            conn.execute("SELECT 1").fetchone()
-        checks.append({"component": "SQLite database", "status": "healthy", "detail": Config.DB_PATH})
-    except Exception as exc:
-        checks.append({"component": "SQLite database", "status": "error", "detail": str(exc)})
-
-    crypto_health = crypto.health()
-    for key, value in crypto_health.items():
-        checks.append({"component": key, "status": "configured", "detail": value})
-
-    checks.extend(
-        [
-            {"component": "runtime environment", "status": Config.ENV.value, "detail": "Streamlit"},
-            {"component": "distributed state", "status": "embedded", "detail": Config.STATE_PROFILE},
-            {"component": "message queue", "status": "embedded", "detail": Config.MESSAGE_QUEUE_PROFILE},
-            {"component": "PyJWT", "status": "available" if _HAS_PYJWT else "stdlib fallback", "detail": Config.JWT_ALGORITHM},
-            {"component": "cryptography", "status": "available" if _HAS_CRYPTOGRAPHY else "stdlib fallback", "detail": ""},
+        metrics_data = [
+            ["Metric", "Value", "Status"],
+            ["Drift Score", f"{metrics.get('drift', 0):.3f}", "WARNING" if metrics.get("drift", 0) > 0.3 else "PASS"],
+            ["Fairness", f"{metrics.get('fairness', 0):.3f}", "WARNING" if metrics.get("fairness", 0) > 0.15 else "PASS"],
+            ["Stability", f"{metrics.get('stability', 0):.3f}", "PASS" if metrics.get("stability", 0) > 0.5 else "FAIL"],
+            ["Risk Score", f"{metrics.get('risk_score', 0):.3f}", "HIGH" if metrics.get("risk_score", 0) > 0.6 else "MEDIUM" if metrics.get("risk_score", 0) > 0.3 else "LOW"],
         ]
-    )
-    st.dataframe(pd.DataFrame(checks), use_container_width=True, hide_index=True)
 
-    warnings = Config.production_warnings()
-    if warnings:
-        st.warning("Production configuration warnings:\n\n" + "\n".join(f"- {item}" for item in warnings))
-    else:
-        st.success("No production configuration warnings detected.")
+        table = Table(metrics_data, colWidths=[2 * inch, 1.5 * inch, 2 * inch])
+        table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#667eea")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                    ("FONTSIZE", (0, 0), (-1, -1), 10),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.beige, colors.white]),
+                    ("GRID", (0, 0), (-1, -1), 1, colors.black),
+                ]
+            )
+        )
+        content.append(Paragraph("Governance Metrics", styles["Heading2"]))
+        content.append(table)
+        content.append(Spacer(1, 12))
+
+        content.append(Paragraph("Regulatory Framework Mapping", styles["Heading2"]))
+        content.append(
+            Paragraph(
+                "<b>NIST AI Risk Management Framework:</b> Applicable<br/>"
+                "<b>EU AI Act Compliance:</b> Risk-tier assessment applied<br/>"
+                "<b>ISO/IEC 42001:</b> AI management system controls recommended<br/>"
+                "<b>OECD and UNESCO:</b> Fairness, accountability, and transparency principles apply",
+                styles["Normal"],
+            )
+        )
+        content.append(Spacer(1, 12))
+
+        metadata = model_card.get("metadata", {})
+        content.append(Paragraph("Model Card Information", styles["Heading2"]))
+        content.append(
+            Paragraph(
+                f"<b>Model ID:</b> {clean_pdf_text(model_card.get('model_id', 'N/A'))}<br/>"
+                f"<b>Type:</b> {clean_pdf_text(metadata.get('type', 'N/A'))}<br/>"
+                f"<b>Created:</b> {clean_pdf_text(metadata.get('created', 'N/A'))}<br/>"
+                f"<b>Training Samples:</b> {model_card.get('training_data', {}).get('size', 'N/A')}<br/>"
+                f"<b>Features:</b> {model_card.get('training_data', {}).get('features', 'N/A')}",
+                styles["Normal"],
+            )
+        )
+        content.append(Spacer(1, 12))
+
+        compliance = model_card.get("compliance", {})
+        content.append(Paragraph("Compliance Assessment", styles["Heading2"]))
+        content.append(
+            Paragraph(
+                f"<b>NIST AI RMF:</b> {clean_pdf_text(compliance.get('nist_ai_rmf', 'N/A'))}<br/>"
+                f"<b>EU AI Act:</b> {clean_pdf_text(compliance.get('eu_ai_act', 'N/A'))}<br/>"
+                f"<b>ISO 42001:</b> {clean_pdf_text(compliance.get('iso_42001', 'N/A'))}",
+                styles["Normal"],
+            )
+        )
+
+        if explainability:
+            content.append(PageBreak())
+            content.append(Paragraph("Model Explainability Analysis", styles["Heading2"]))
+            importance_df = explainability.get("feature_importance", pd.DataFrame())
+            if isinstance(importance_df, pd.DataFrame) and not importance_df.empty:
+                importance_data = [["Feature", "SHAP Importance"]]
+                for _, row in importance_df.head(10).iterrows():
+                    importance_data.append([clean_pdf_text(row["Feature"]), f"{row['SHAP_Importance']:.4f}"])
+                importance_table = Table(importance_data, colWidths=[2.5 * inch, 2 * inch])
+                importance_table.setStyle(
+                    TableStyle(
+                        [
+                            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#764ba2")),
+                            ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                            ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                            ("FONTSIZE", (0, 0), (-1, -1), 9),
+                            ("GRID", (0, 0), (-1, -1), 1, colors.grey),
+                        ]
+                    )
+                )
+                content.append(importance_table)
+
+        content.append(PageBreak())
+        content.append(Paragraph("Governance Recommendations", styles["Heading2"]))
+        recommendations = [
+            "1. Implement continuous monitoring for drift detection.",
+            "2. Conduct recurring fairness audits with sensitive-feature review where legally appropriate.",
+            "3. Keep model card documentation updated for every material model change.",
+            "4. Establish human-in-the-loop review for high-risk decisions.",
+            "5. Create an incident response plan for governance violations.",
+            "6. Document retraining events, approval decisions, and deployment controls.",
+        ]
+        for recommendation in recommendations:
+            content.append(Paragraph(recommendation, styles["Normal"]))
+
+        content.append(Spacer(1, 20))
+        content.append(
+            Paragraph(
+                f"Report Generated: {utc_now_iso()}<br/>Aurexis Systems Version C - AI Governance Operating System",
+                styles["Normal"],
+            )
+        )
+
+        doc.build(content)
+        return file_path
+    except Exception as exc:
+        st.error(f"PDF generation failed: {exc}")
+        return None
 
 
-def main() -> None:
-    get_db_service()
+# ══════════════════════════════════════════════════════════════════════════
+# DATA INGESTION AND DATASET GENERATION
+# ══════════════════════════════════════════════════════════════════════════
+def ingest_file(file: Any) -> Optional[pd.DataFrame]:
+    try:
+        name = file.name.lower()
+        if name.endswith(".csv"):
+            return pd.read_csv(file)
+        if name.endswith(".xlsx"):
+            return pd.read_excel(file)
+        if name.endswith(".json"):
+            return pd.read_json(file)
+        if name.endswith(".parquet"):
+            return pd.read_parquet(file)
+    except Exception as exc:
+        st.warning(f"Could not read {getattr(file, 'name', 'file')}: {exc}")
+    return None
 
-    if "token" in st.session_state:
-        payload = verify_token(st.session_state["token"])
-        if payload:
-            st.session_state["user"] = {
-                "user_id": payload["user_id"],
-                "role": payload["role"],
-                "tenant_id": payload["tenant_id"],
+
+def generate_domain_dataset(domain: str, n_samples: int = 500) -> pd.DataFrame:
+    rng = np.random.default_rng(42)
+
+    if domain == "Finance":
+        df = pd.DataFrame(
+            {
+                "credit_score": rng.normal(650, 50, n_samples),
+                "income": rng.normal(70000, 20000, n_samples),
+                "debt_ratio": rng.uniform(0.1, 0.8, n_samples),
+                "loan_amount": rng.normal(20000, 8000, n_samples),
+                "age": rng.integers(20, 80, n_samples),
+                "gender": rng.choice([0, 1], n_samples),
             }
-        else:
-            st.session_state.pop("token", None)
-            st.session_state.pop("user", None)
+        )
+        df["target"] = ((df["credit_score"] < 620) | (df["debt_ratio"] > 0.5)).astype(int)
+    elif domain == "Healthcare":
+        df = pd.DataFrame(
+            {
+                "age": rng.integers(20, 80, n_samples),
+                "bmi": rng.normal(27, 5, n_samples),
+                "blood_pressure": rng.normal(120, 15, n_samples),
+                "cholesterol": rng.normal(200, 40, n_samples),
+                "race": rng.choice([0, 1, 2], n_samples),
+            }
+        )
+        df["target"] = ((df["bmi"] > 30) | (df["blood_pressure"] > 140)).astype(int)
+    elif domain == "Sports":
+        df = pd.DataFrame(
+            {
+                "speed": rng.normal(25, 5, n_samples),
+                "strength": rng.normal(70, 10, n_samples),
+                "stamina": rng.normal(60, 15, n_samples),
+                "reaction_time": rng.normal(0.3, 0.05, n_samples),
+                "gender": rng.choice([0, 1], n_samples),
+            }
+        )
+        df["target"] = ((df["speed"] > 28) & (df["reaction_time"] < 0.28)).astype(int)
+    elif domain == "Business":
+        df = pd.DataFrame(
+            {
+                "revenue": rng.normal(1e6, 3e5, n_samples),
+                "expenses": rng.normal(7e5, 2e5, n_samples),
+                "customer_growth": rng.normal(0.1, 0.05, n_samples),
+                "market_share": rng.uniform(0.01, 0.3, n_samples),
+                "region": rng.choice([0, 1, 2], n_samples),
+            }
+        )
+        df["target"] = ((df["revenue"] - df["expenses"] > 2e5) & (df["customer_growth"] > 0.1)).astype(int)
+    elif domain == "Emotion":
+        df = pd.DataFrame(
+            {
+                "valence": rng.uniform(-1, 1, n_samples),
+                "arousal": rng.uniform(0, 1, n_samples),
+                "dominance": rng.uniform(0, 1, n_samples),
+                "speech_rate": rng.normal(150, 30, n_samples),
+                "demographic": rng.choice([0, 1], n_samples),
+            }
+        )
+        df["target"] = ((df["valence"] > 0.2) & (df["arousal"] > 0.5)).astype(int)
+    else:
+        X_arr, y_arr = make_classification(n_samples=n_samples, n_features=6, random_state=42)
+        df = pd.DataFrame(X_arr, columns=[f"feature_{i}" for i in range(X_arr.shape[1])])
+        df["target"] = y_arr
 
-    user = CurrentUser.from_session()
-    if user is None:
-        login_view()
+    return df
+
+
+def load_data(uploaded_files: Optional[List[Any]], domain: str) -> Tuple[pd.DataFrame, str]:
+    if uploaded_files:
+        frames = []
+        for uploaded_file in uploaded_files:
+            frame = ingest_file(uploaded_file)
+            if isinstance(frame, pd.DataFrame) and not frame.empty:
+                frames.append(frame)
+        if frames:
+            return pd.concat(frames, ignore_index=True, sort=False), "uploaded"
+    return generate_domain_dataset(domain), "synthetic"
+
+
+def prepare_features(df: pd.DataFrame) -> Tuple[Optional[pd.DataFrame], Optional[pd.Series], Optional[pd.Series], Optional[str]]:
+    if len(df.columns) < 2:
+        st.error("Dataset must have at least 2 columns.")
+        return None, None, None, None
+
+    working_df = df.copy()
+    working_df.columns = [str(col) for col in working_df.columns]
+    working_df = working_df.loc[:, ~working_df.columns.duplicated()]
+
+    default_target_index = max(0, len(working_df.columns) - 1)
+    target_col = st.sidebar.selectbox("Target Column", working_df.columns, index=default_target_index)
+    if target_col not in working_df.columns:
+        st.error("Invalid target column.")
+        return None, None, None, None
+
+    X = working_df.drop(columns=[target_col]).copy()
+    y = working_df[target_col].copy()
+
+    lower_map = {col: str(col).lower() for col in X.columns}
+    sensitive_candidates = [
+        col for col, lower in lower_map.items()
+        if any(token in lower for token in ("gender", "race", "age", "demographic", "region"))
+    ]
+
+    sensitive_features = None
+    if sensitive_candidates:
+        use_sensitive = st.sidebar.checkbox("Use sensitive features for fairness testing", value=True)
+        if use_sensitive:
+            selected_sensitive = st.sidebar.selectbox("Sensitive Feature", sensitive_candidates)
+            sensitive_features = X[selected_sensitive].copy()
+
+    for col in X.columns:
+        if X[col].dtype == "object" or str(X[col].dtype).startswith("category"):
+            try:
+                X[col] = pd.to_numeric(X[col])
+            except Exception:
+                X[col] = LabelEncoder().fit_transform(X[col].astype(str))
+
+    if y.dtype == "object" or str(y.dtype).startswith("category"):
+        try:
+            y = pd.to_numeric(y)
+        except Exception:
+            y = pd.Series(LabelEncoder().fit_transform(y.astype(str)), index=y.index)
+    else:
+        y = pd.to_numeric(y, errors="coerce")
+
+    X = X.replace([np.inf, -np.inf], np.nan).fillna(0).astype(float)
+    y = y.replace([np.inf, -np.inf], np.nan).fillna(0)
+
+    if sensitive_features is not None:
+        if sensitive_features.dtype == "object" or str(sensitive_features.dtype).startswith("category"):
+            sensitive_features = pd.Series(LabelEncoder().fit_transform(sensitive_features.astype(str)), index=sensitive_features.index)
+        else:
+            sensitive_features = pd.to_numeric(sensitive_features, errors="coerce").fillna(0)
+
+    return X, y, sensitive_features, target_col
+
+
+def detect_task(y: pd.Series) -> str:
+    unique_count = y.nunique(dropna=True)
+    if unique_count <= 20 and pd.api.types.is_integer_dtype(y.astype(float)):
+        return "classification"
+    return "regression"
+
+
+def make_model(task: str) -> Any:
+    if task == "classification":
+        return RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1, class_weight="balanced")
+    return RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1)
+
+
+def split_dataset(
+    X: pd.DataFrame,
+    y: pd.Series,
+    sensitive_features: Optional[pd.Series],
+    task: str,
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series, Optional[pd.Series], Optional[pd.Series]]:
+    stratify = None
+    if task == "classification" and y.nunique() > 1 and y.value_counts().min() >= 2:
+        stratify = y
+
+    if sensitive_features is not None:
+        X_train, X_test, y_train, y_test, s_train, s_test = train_test_split(
+            X, y, sensitive_features, test_size=0.3, random_state=42, stratify=stratify
+        )
+        return X_train, X_test, y_train, y_test, s_train, s_test
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.3, random_state=42, stratify=stratify
+    )
+    return X_train, X_test, y_train, y_test, None, None
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# AI ADVISOR
+# ══════════════════════════════════════════════════════════════════════════
+def local_governance_advice(prompt: str, metrics: Optional[Dict[str, float]], risk_class: Dict[str, Any], jurisdiction: str) -> str:
+    prompt = prompt.strip() or "Provide governance guidance."
+    if not metrics:
+        return (
+            "Hello. Train a model first so I can analyze drift, fairness, stability, and risk. "
+            "In the meantime, configure the jurisdiction, domain, target column, and optional sensitive feature in the sidebar."
+        )
+
+    recommendations = []
+    if metrics.get("risk_score", 0) > 0.6:
+        recommendations.append("Escalate to human review before deployment.")
+    if metrics.get("drift", 0) > 0.3:
+        recommendations.append("Investigate data drift and consider retraining or data-quality controls.")
+    if metrics.get("fairness", 0) > 0.15:
+        recommendations.append("Run a fairness audit and document bias mitigation actions.")
+    if metrics.get("stability", 1) < 0.5:
+        recommendations.append("Hold deployment until stability improves.")
+    if not recommendations:
+        recommendations.append("Current metrics are within default thresholds; continue periodic monitoring.")
+
+    return (
+        f"Local Aurexis Advisor response for: {prompt}\n\n"
+        f"Risk classification: {risk_class['classification']} ({risk_class['monitoring_level']} monitoring)\n"
+        f"Jurisdiction/framework: {jurisdiction}\n"
+        f"Current risk score: {metrics.get('risk_score', 0):.3f}\n\n"
+        "Recommended next steps:\n- " + "\n- ".join(recommendations)
+    )
+
+
+def get_openai_api_key() -> Optional[str]:
+    try:
+        secret_value = st.secrets.get("OPENAI_API_KEY")
+        if secret_value:
+            return secret_value
+    except Exception:
+        pass
+    return os.getenv("OPENAI_API_KEY") or None
+
+
+def render_ai_advisor(domain: str, jurisdiction: str) -> None:
+    st.markdown("---")
+    st.subheader("🤖 Aurexis AI Governance Advisor")
+
+    metrics = st.session_state.get("metrics")
+    risk_class = classify_ai_risk_level(domain)
+    api_key = get_openai_api_key()
+    use_openai = _OPENAI_AVAILABLE and bool(api_key)
+
+    if not _OPENAI_AVAILABLE:
+        st.info("OpenAI package is not installed. The local advisor is active.")
+    elif not api_key:
+        st.info("OpenAI API key is not configured. The local advisor is active.")
+    else:
+        st.caption("OpenAI advisor enabled. If quota or billing is unavailable, Aurexis will automatically use local guidance.")
+
+    if st.button("Clear Advisor Chat"):
+        reset_chat()
+        st.rerun()
+
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.write(message["content"])
+
+    user_input = st.chat_input("Ask about governance, compliance, risk, drift, or fairness...")
+    if not user_input:
         return
 
-    render_brand_header()
-    page = sidebar(user)
+    st.session_state.messages.append({"role": "user", "content": user_input})
+    with st.chat_message("user"):
+        st.write(user_input)
 
-    views = {
-        "Dashboard": dashboard_view,
-        "Evaluate Model": evaluate_view,
-        "Submit Approval": approval_view,
-        "Upload Evidence": evidence_view,
-        "Audit Trail": audit_trail_view,
-        "Chain of Custody": chain_of_custody_view,
-        "Model Registry": model_registry_view,
-        "Metrics": metrics_view,
-        "System Health": system_health_view,
-    }
-    views[page](user)
+    reply = ""
+    if use_openai:
+        try:
+            client = OpenAI(api_key=api_key)
+            response = client.chat.completions.create(
+                model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are an expert AI governance advisor for Aurexis Systems. "
+                            "Give concise, actionable guidance for NIST AI RMF, EU AI Act, ISO/IEC 42001, "
+                            "OECD principles, UNESCO ethics, model risk management, drift, fairness, and audit readiness.\n\n"
+                            f"Domain: {domain}\n"
+                            f"Risk classification: {risk_class['classification']}\n"
+                            f"Jurisdiction: {jurisdiction}\n"
+                            f"Metrics: {json.dumps(metrics or {}, default=safe_json_default)}"
+                        ),
+                    },
+                    *st.session_state.messages,
+                ],
+                temperature=0.3,
+                max_tokens=800,
+            )
+            reply = response.choices[0].message.content or ""
+        except OpenAIRateLimitError:
+            st.warning(
+                "OpenAI quota or billing is unavailable for this API key. "
+                "Using the built-in local Aurexis Advisor instead."
+            )
+            reply = local_governance_advice(user_input, metrics, risk_class, jurisdiction)
+        except Exception as exc:
+            st.warning(f"OpenAI advisor unavailable ({exc}). Using local guidance instead.")
+            reply = local_governance_advice(user_input, metrics, risk_class, jurisdiction)
+    else:
+        reply = local_governance_advice(user_input, metrics, risk_class, jurisdiction)
+
+    st.session_state.messages.append({"role": "assistant", "content": reply})
+    with st.chat_message("assistant"):
+        st.write(reply)
 
 
-if __name__ == "__main__":
-    main()
+# ══════════════════════════════════════════════════════════════════════════
+# STREAMLIT APP
+# ══════════════════════════════════════════════════════════════════════════
+st.markdown(
+    """
+    <div class="governance-header">
+        <h1>⚖️ AUREXIS SYSTEMS — VERSION C</h1>
+        <p>AI Governance Operating System (Production-Grade)</p>
+        <p>NIST AI RMF | EU AI Act | ISO/IEC 42001 | OECD Principles | UNESCO Ethics</p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+for key, value in {
+    "model": None,
+    "model_task": None,
+    "metrics": None,
+    "messages": [],
+    "jurisdiction": "United States (SR 11-7)",
+    "model_card": None,
+    "model_id": None,
+    "explainability": None,
+    "gov_result": None,
+}.items():
+    if key not in st.session_state:
+        st.session_state[key] = value
+
+st.sidebar.header("⚙️ Governance Configuration")
+jurisdiction = st.sidebar.selectbox(
+    "Regulatory Framework",
+    [
+        "United States (SR 11-7)",
+        "European Union (EU AI Act)",
+        "UK Model Risk Guidance",
+        "APAC General Risk Framework",
+        "ISO/IEC 42001",
+    ],
+)
+st.session_state["jurisdiction"] = jurisdiction
+
+st.sidebar.header("📊 Dataset & Model")
+domain = st.sidebar.selectbox(
+    "Application Domain",
+    ["Finance", "Healthcare", "Sports", "Business", "Emotion", "General"],
+)
+
+uploaded_files = st.sidebar.file_uploader(
+    "Upload Dataset",
+    accept_multiple_files=True,
+    type=["csv", "xlsx", "json", "parquet"],
+    key="multi_uploader",
+)
+
+st.sidebar.header("📋 Framework Information")
+selected_framework = st.sidebar.selectbox("Select Framework Reference", list(GOVERNANCE_FRAMEWORKS.keys()))
+if st.sidebar.button("📖 View Framework Details"):
+    st.sidebar.info(
+        f"**{selected_framework}**\n\n"
+        + "\n".join([f"• {key}: {value}" for key, value in GOVERNANCE_FRAMEWORKS[selected_framework].items()])
+    )
+
+with st.expander("Dependency Status", expanded=False):
+    st.write(
+        {
+            "SHAP explainability": "available" if _SHAP_AVAILABLE else "not installed - app still works",
+            "Fairlearn advanced fairness": "available" if _FAIRLEARN_AVAILABLE else "not installed - basic fairness active",
+            "OpenAI advisor": "available" if _OPENAI_AVAILABLE and get_openai_api_key() else "local advisor active",
+        }
+    )
+
+df, data_source = load_data(uploaded_files, domain)
+st.info(f"📁 Data: **{data_source}** | {len(df):,} rows × {len(df.columns)} columns")
+st.dataframe(df.head(10), use_container_width=True)
+
+X, y, sensitive_features, target_col = prepare_features(df)
+if X is None or y is None:
+    st.stop()
+
+task = detect_task(y)
+if st.session_state.model is None or st.session_state.model_task != task:
+    st.session_state.model = make_model(task)
+    st.session_state.model_task = task
+
+st.caption(f"Detected task: **{task}** | Target column: **{target_col}**")
+
+st.subheader("🚀 Model Training & Governance Assessment")
+col1, col2 = st.columns([3, 1])
+with col1:
+    st.write("Train the model and trigger comprehensive governance assessment.")
+with col2:
+    train_clicked = st.button("🚀 Train Model", use_container_width=True)
+
+if train_clicked:
+    with st.spinner("Training model and evaluating governance controls..."):
+        try:
+            X_train, X_test, y_train, y_test, sensitive_train, sensitive_test = split_dataset(
+                X, y, sensitive_features, task
+            )
+            model = make_model(task)
+            model.fit(X_train, y_train)
+            preds = model.predict(X_test)
+
+            drift_metrics = compute_drift_comprehensive(X_train, X_test)
+            fairness_metrics = compute_fairness_comprehensive(preds, y_test, sensitive_test, task)
+            stability = system_stability_score(drift_metrics["overall"], fairness_metrics["composite"])
+            uncertainty = compute_model_uncertainty(model, X_test, task)
+            risk_score = compute_risk_score(drift_metrics["overall"], fairness_metrics["composite"], uncertainty)
+
+            metrics = {
+                "drift": drift_metrics["overall"],
+                "wasserstein": drift_metrics["wasserstein"],
+                "psi": drift_metrics["psi"],
+                "ks": drift_metrics["ks"],
+                "fairness": fairness_metrics["composite"],
+                "stability": stability,
+                "risk_score": risk_score,
+                "uncertainty": uncertainty,
+                "dp": fairness_metrics.get("demographic_parity", 0),
+                "eo": fairness_metrics.get("equalized_odds", 0),
+            }
+
+            risk_class = classify_ai_risk_level(domain)
+            model_card, model_id = create_model_card(model, X_train, y_train, metrics, jurisdiction, domain, risk_class)
+            explainability = generate_explainability_report(model, X_test) if _SHAP_AVAILABLE else None
+            gov_result = governance_intervention(model, metrics, domain, jurisdiction, X_train, y_train)
+
+            st.session_state.model = model
+            st.session_state.model_task = task
+            st.session_state.metrics = metrics
+            st.session_state.model_card = model_card
+            st.session_state.model_id = model_id
+            st.session_state.explainability = explainability
+            st.session_state.gov_result = gov_result
+
+            st.success("Model trained and governance assessment completed.")
+            st.balloons()
+        except Exception as exc:
+            st.error(f"Training failed: {exc}")
+
+if st.session_state.metrics:
+    metrics = st.session_state.metrics
+    gov_result = st.session_state.get("gov_result")
+
+    if gov_result:
+        render_governance_messages(gov_result)
+
+    st.subheader("📊 Comprehensive Metrics Dashboard")
+    col1, col2, col3, col4, col5 = st.columns(5)
+    col1.metric("Drift Score", f"{metrics['drift']:.3f}", delta="HIGH" if metrics["drift"] > 0.3 else "OK")
+    col2.metric("Fairness Gap", f"{metrics['fairness']:.3f}", delta="HIGH" if metrics["fairness"] > 0.15 else "OK")
+    col3.metric("Stability", f"{metrics['stability']:.3f}", delta="STABLE" if metrics["stability"] > 0.5 else "LOW")
+    col4.metric("Uncertainty", f"{metrics['uncertainty']:.4f}")
+    risk_status = "LOW" if metrics["risk_score"] < 0.3 else "MEDIUM" if metrics["risk_score"] < 0.6 else "HIGH"
+    col5.metric("Risk Score", f"{metrics['risk_score']:.3f}", delta=risk_status)
+
+    with st.expander("Detailed Drift Metrics"):
+        st.json(
+            {
+                "wasserstein": metrics.get("wasserstein", 0),
+                "population_stability_index": metrics.get("psi", 0),
+                "kolmogorov_smirnov": metrics.get("ks", 0),
+            }
+        )
+
+    if metrics.get("dp") or metrics.get("eo"):
+        st.subheader("Advanced Fairness Metrics")
+        fc1, fc2 = st.columns(2)
+        fc1.metric("Demographic Parity Diff", f"{metrics.get('dp', 0):.4f}")
+        fc2.metric("Equalized Odds Diff", f"{metrics.get('eo', 0):.4f}")
+
+    if st.session_state.model_card:
+        st.subheader("📋 Model Card (Governance Artifact)")
+        card = st.session_state.model_card
+        tab1, tab2, tab3 = st.tabs(["Metadata", "Governance", "Compliance"])
+        with tab1:
+            metadata = card.get("metadata", {})
+            st.json(
+                {
+                    "Model ID": card.get("model_id"),
+                    "Type": metadata.get("type"),
+                    "Domain": metadata.get("domain"),
+                    "Created": metadata.get("created"),
+                    "Training Samples": card.get("training_data", {}).get("size"),
+                    "Features": card.get("training_data", {}).get("features"),
+                }
+            )
+        with tab2:
+            st.json(card.get("governance", {}))
+        with tab3:
+            st.json(card.get("compliance", {}))
+
+    if st.session_state.explainability and _SHAP_AVAILABLE:
+        st.subheader("🔍 Model Explainability (SHAP Analysis)")
+        importance_df = st.session_state.explainability.get("feature_importance")
+        if isinstance(importance_df, pd.DataFrame) and not importance_df.empty:
+            st.bar_chart(importance_df.set_index("Feature").head(10))
+            with st.expander("Feature Importance Details"):
+                st.dataframe(importance_df.head(15), use_container_width=True)
+
+    st.subheader("📄 Governance Report Generation")
+    if st.button("📊 Generate Comprehensive PDF Report", use_container_width=True):
+        with st.spinner("Generating report..."):
+            report_path = generate_comprehensive_pdf_report(
+                metrics,
+                classify_ai_risk_level(domain),
+                st.session_state.model_card,
+                st.session_state.explainability,
+                filename=f"aurexis_report_{st.session_state.model_id}.pdf",
+            )
+            if report_path and report_path.exists():
+                with report_path.open("rb") as pdf_file:
+                    st.download_button(
+                        "📥 Download PDF Report",
+                        pdf_file,
+                        file_name=f"aurexis_governance_report_{st.session_state.model_id}.pdf",
+                        mime="application/pdf",
+                        use_container_width=True,
+                    )
+                st.success("Report generated successfully.")
+
+st.subheader("📜 Governance Audit Trail")
+audit_logs = load_audit_logs()
+if audit_logs:
+    audit_df = pd.DataFrame(audit_logs)
+    with st.expander("View Detailed Audit Logs", expanded=False):
+        st.dataframe(audit_df, use_container_width=True)
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Total Events", len(audit_logs))
+    col2.metric("Governance Checks", len([log for log in audit_logs if log.get("event_type") == "governance_check"]))
+    col3.metric("Escalations", len([log for log in audit_logs if "escalate" in log.get("governance", {}).get("action", "")]))
+else:
+    st.info("No audit logs yet. Train a model to generate governance events.")
+
+st.subheader("🗂️ Model Cards Repository")
+model_cards = load_model_cards()
+if model_cards:
+    with st.expander(f"View {len(model_cards)} Saved Model Cards"):
+        for index, card in enumerate(model_cards, 1):
+            card_col1, card_col2 = st.columns([3, 1])
+            with card_col1:
+                st.write(f"**{index}. {card.get('model_id')}** - {card.get('metadata', {}).get('domain')}")
+            with card_col2:
+                if st.button("📋 View", key=f"card_{index}"):
+                    st.json(card)
+else:
+    st.info("No model cards yet. Train models to populate the repository.")
+
+st.subheader("📚 Governance Frameworks Reference")
+framework_tabs = st.tabs(list(GOVERNANCE_FRAMEWORKS.keys()))
+for tab, framework_name in zip(framework_tabs, GOVERNANCE_FRAMEWORKS.keys()):
+    with tab:
+        for key, value in GOVERNANCE_FRAMEWORKS[framework_name].items():
+            st.write(f"**{key}:** {value}")
+
+render_ai_advisor(domain, jurisdiction)
+
+st.markdown("---")
+st.markdown(
+    """
+    <div style="text-align: center; color: #666; font-size: 12px;">
+    <p><strong>AUREXIS SYSTEMS — VERSION C</strong> | AI Governance Operating System</p>
+    <p>NIST AI RMF • EU AI Act • ISO/IEC 42001 • OECD Principles • UNESCO Ethics</p>
+    <p>© 2026 Aurexis Systems. All rights reserved.</p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
