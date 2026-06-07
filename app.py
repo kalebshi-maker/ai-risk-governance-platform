@@ -999,32 +999,219 @@ def detect_user_language(text: str) -> str:
 def translated_recommendations(recommendations: List[str], language: str) -> List[str]:
     translations = {
         "Escalate to human review before deployment.": {
+            "en": "Escalate to human review before deployment.",
             "zh": "部署前升级给人工审核。",
+            "ja": "デプロイ前に人間によるレビューへエスカレーションしてください。",
+            "ko": "배포 전에 사람의 검토 단계로 에스컬레이션하세요.",
+            "ar": "قم بالتصعيد إلى مراجعة بشرية قبل النشر.",
+            "ru": "Перед развертыванием передайте решение на проверку человеку.",
             "es": "Escalar a revisión humana antes del despliegue.",
             "fr": "Transmettre à une revue humaine avant le déploiement.",
+            "de": "Vor der Bereitstellung an eine menschliche Prüfung eskalieren.",
+            "pt": "Encaminhe para revisão humana antes da implantação.",
+            "it": "Escalare a una revisione umana prima del rilascio.",
         },
         "Investigate data drift and consider retraining or data-quality controls.": {
+            "en": "Investigate data drift and consider retraining or data-quality controls.",
             "zh": "检查数据漂移，并考虑重新训练模型或加强数据质量控制。",
+            "ja": "データドリフトを調査し、再学習またはデータ品質管理を検討してください。",
+            "ko": "데이터 드리프트를 조사하고 재학습 또는 데이터 품질 관리를 고려하세요.",
+            "ar": "تحقق من انحراف البيانات وفكّر في إعادة التدريب أو ضوابط جودة البيانات.",
+            "ru": "Изучите дрейф данных и рассмотрите переобучение или меры контроля качества данных.",
             "es": "Investigar la deriva de datos y considerar reentrenamiento o controles de calidad.",
             "fr": "Analyser la dérive des données et envisager un réentraînement ou des contrôles qualité.",
+            "de": "Untersuchen Sie Datendrift und erwägen Sie Retraining oder Datenqualitätskontrollen.",
+            "pt": "Investigue a deriva dos dados e considere retreinamento ou controles de qualidade.",
+            "it": "Analizzare il data drift e valutare riaddestramento o controlli di qualità dei dati.",
         },
         "Run a fairness audit and document bias mitigation actions.": {
+            "en": "Run a fairness audit and document bias mitigation actions.",
             "zh": "进行公平性审计，并记录偏差缓解措施。",
+            "ja": "公平性監査を実施し、バイアス緩和策を文書化してください。",
+            "ko": "공정성 감사를 수행하고 편향 완화 조치를 문서화하세요.",
+            "ar": "نفّذ تدقيقًا للإنصاف ووثّق إجراءات الحد من التحيز.",
+            "ru": "Проведите аудит справедливости и задокументируйте меры по снижению смещения.",
             "es": "Ejecutar una auditoría de equidad y documentar las acciones de mitigación de sesgos.",
             "fr": "Réaliser un audit d'équité et documenter les mesures de réduction des biais.",
+            "de": "Führen Sie ein Fairness-Audit durch und dokumentieren Sie Maßnahmen zur Bias-Minderung.",
+            "pt": "Execute uma auditoria de equidade e documente ações de mitigação de vieses.",
+            "it": "Eseguire un audit di equità e documentare le azioni di mitigazione dei bias.",
         },
         "Hold deployment until stability improves.": {
+            "en": "Hold deployment until stability improves.",
             "zh": "在稳定性改善前暂停部署。",
+            "ja": "安定性が改善するまでデプロイを保留してください。",
+            "ko": "안정성이 개선될 때까지 배포를 보류하세요.",
+            "ar": "أوقف النشر حتى تتحسن الاستقرارية.",
+            "ru": "Приостановите развертывание до улучшения стабильности.",
             "es": "Detener el despliegue hasta que mejore la estabilidad.",
             "fr": "Suspendre le déploiement jusqu'à amélioration de la stabilité.",
+            "de": "Setzen Sie die Bereitstellung aus, bis sich die Stabilität verbessert.",
+            "pt": "Suspenda a implantação até que a estabilidade melhore.",
+            "it": "Sospendere il rilascio finché la stabilità non migliora.",
         },
         "Current metrics are within default thresholds; continue periodic monitoring.": {
+            "en": "Current metrics are within default thresholds; continue periodic monitoring.",
             "zh": "当前指标在默认阈值内；继续进行周期性监控。",
+            "ja": "現在の指標は既定のしきい値内です。定期的な監視を続けてください。",
+            "ko": "현재 지표는 기본 임계값 내에 있습니다. 정기 모니터링을 계속하세요.",
+            "ar": "المقاييس الحالية ضمن الحدود الافتراضية؛ استمر في المراقبة الدورية.",
+            "ru": "Текущие метрики находятся в пределах порогов; продолжайте периодический мониторинг.",
             "es": "Las métricas actuales están dentro de los umbrales; continúe el monitoreo periódico.",
             "fr": "Les métriques actuelles respectent les seuils; poursuivre la surveillance périodique.",
+            "de": "Die aktuellen Metriken liegen innerhalb der Standardgrenzen; setzen Sie die regelmäßige Überwachung fort.",
+            "pt": "As métricas atuais estão dentro dos limites padrão; continue o monitoramento periódico.",
+            "it": "Le metriche attuali sono entro le soglie predefinite; continuare il monitoraggio periodico.",
         },
     }
     return [translations.get(item, {}).get(language, item) for item in recommendations]
+
+
+LOCAL_ADVISOR_COPY = {
+    "en": {
+        "no_metrics": (
+            "Hello. I can discuss AI governance, compliance, daily life, learning, and work with you. "
+            "Train a model first if you want me to analyze drift, fairness, stability, and risk."
+        ),
+        "response_title": "Local Aurexis Advisor response for",
+        "risk": "Risk classification",
+        "monitoring": "monitoring",
+        "jurisdiction": "Jurisdiction/framework",
+        "score": "Current risk score",
+        "next_steps": "Recommended next steps",
+        "casual": "We can also keep talking about your daily life, learning plans, work, or product ideas.",
+    },
+    "zh": {
+        "no_metrics": (
+            "你好！我可以用中文和你交流。你可以和我聊 AI 治理、合规、风险管理，也可以聊日常生活、学习和工作。"
+            "如果你想让我分析模型的漂移、公平性、稳定性和风险，请先在上方训练一个模型。"
+        ),
+        "response_title": "Aurexis 本地顾问回复",
+        "risk": "风险分类",
+        "monitoring": "监控",
+        "jurisdiction": "监管/框架",
+        "score": "当前风险分数",
+        "next_steps": "建议的下一步",
+        "casual": "如果你愿意，我们也可以继续用中文聊你的学习计划、工作流程、产品想法或日常生活。",
+    },
+    "ja": {
+        "no_metrics": (
+            "こんにちは！日本語でお話しできます。AIガバナンス、コンプライアンス、リスク管理だけでなく、"
+            "日常生活、学習、仕事についても相談できます。ドリフト、公平性、安定性、リスクを分析したい場合は、まずモデルを学習してください。"
+        ),
+        "response_title": "Aurexis ローカルアドバイザーの回答",
+        "risk": "リスク分類",
+        "monitoring": "監視",
+        "jurisdiction": "管轄/フレームワーク",
+        "score": "現在のリスクスコア",
+        "next_steps": "推奨される次のステップ",
+        "casual": "学習計画、仕事の進め方、製品アイデア、日常生活についても日本語で続けて話せます。",
+    },
+    "ko": {
+        "no_metrics": (
+            "안녕하세요! 한국어로 대화할 수 있습니다. AI 거버넌스, 컴플라이언스, 리스크 관리뿐 아니라 "
+            "일상생활, 학습, 업무 이야기도 함께 나눌 수 있어요. 드리프트, 공정성, 안정성, 리스크를 분석하려면 먼저 모델을 학습해 주세요."
+        ),
+        "response_title": "Aurexis 로컬 어드바이저 응답",
+        "risk": "위험 분류",
+        "monitoring": "모니터링",
+        "jurisdiction": "관할/프레임워크",
+        "score": "현재 위험 점수",
+        "next_steps": "권장 다음 단계",
+        "casual": "학습 계획, 업무 방식, 제품 아이디어, 일상생활에 대해서도 한국어로 계속 이야기할 수 있습니다.",
+    },
+    "ar": {
+        "no_metrics": (
+            "مرحبًا! يمكنني التحدث معك باللغة العربية حول حوكمة الذكاء الاصطناعي والامتثال وإدارة المخاطر، "
+            "وكذلك الحياة اليومية والتعلم والعمل. إذا أردت تحليل الانحراف والإنصاف والاستقرار والمخاطر، فدرّب نموذجًا أولًا."
+        ),
+        "response_title": "استجابة مستشار Aurexis المحلي",
+        "risk": "تصنيف المخاطر",
+        "monitoring": "المراقبة",
+        "jurisdiction": "الإطار/النطاق التنظيمي",
+        "score": "درجة المخاطر الحالية",
+        "next_steps": "الخطوات التالية المقترحة",
+        "casual": "يمكننا أيضًا متابعة الحديث بالعربية عن خطط التعلم والعمل والأفكار والحياة اليومية.",
+    },
+    "ru": {
+        "no_metrics": (
+            "Здравствуйте! Я могу общаться с вами на русском языке об управлении ИИ, комплаенсе, рисках, "
+            "а также о повседневной жизни, учебе и работе. Чтобы проанализировать дрейф, справедливость, стабильность и риск, сначала обучите модель."
+        ),
+        "response_title": "Ответ локального советника Aurexis",
+        "risk": "Классификация риска",
+        "monitoring": "мониторинг",
+        "jurisdiction": "Юрисдикция/фреймворк",
+        "score": "Текущий риск-скор",
+        "next_steps": "Рекомендуемые следующие шаги",
+        "casual": "Мы также можем продолжить на русском о планах обучения, работе, идеях продукта или повседневной жизни.",
+    },
+    "es": {
+        "no_metrics": (
+            "Hola. Puedo responder en español. Podemos hablar de gobernanza de IA, cumplimiento, "
+            "vida diaria, aprendizaje o trabajo. Entrena un modelo primero si quieres que analice métricas."
+        ),
+        "response_title": "Respuesta local de Aurexis para",
+        "risk": "Clasificación de riesgo",
+        "monitoring": "monitoreo",
+        "jurisdiction": "Jurisdicción/marco",
+        "score": "Puntuación de riesgo actual",
+        "next_steps": "Próximos pasos recomendados",
+        "casual": "También podemos seguir hablando en español sobre aprendizaje, trabajo, ideas de producto o vida diaria.",
+    },
+    "fr": {
+        "no_metrics": (
+            "Bonjour. Je peux répondre en français. Nous pouvons discuter de gouvernance IA, de conformité, "
+            "de vie quotidienne, d'apprentissage ou de travail. Entraînez d'abord un modèle pour analyser les métriques."
+        ),
+        "response_title": "Réponse locale d'Aurexis pour",
+        "risk": "Classification du risque",
+        "monitoring": "surveillance",
+        "jurisdiction": "Juridiction/cadre",
+        "score": "Score de risque actuel",
+        "next_steps": "Prochaines étapes recommandées",
+        "casual": "Nous pouvons aussi continuer en français sur vos études, votre travail, vos idées produit ou la vie quotidienne.",
+    },
+    "de": {
+        "no_metrics": (
+            "Hallo! Ich kann auf Deutsch mit dir sprechen - über KI-Governance, Compliance, Risikomanagement, "
+            "aber auch über Alltag, Lernen und Arbeit. Trainiere zuerst ein Modell, wenn ich Drift, Fairness, Stabilität und Risiko analysieren soll."
+        ),
+        "response_title": "Lokale Aurexis-Advisor-Antwort auf",
+        "risk": "Risikoklassifizierung",
+        "monitoring": "Überwachung",
+        "jurisdiction": "Rechtsraum/Framework",
+        "score": "Aktueller Risiko-Score",
+        "next_steps": "Empfohlene nächste Schritte",
+        "casual": "Wir können auch auf Deutsch über Lernpläne, Arbeit, Produktideen oder Alltag weiterreden.",
+    },
+    "pt": {
+        "no_metrics": (
+            "Olá! Posso conversar em português sobre governança de IA, conformidade, gestão de riscos, "
+            "vida diária, estudos e trabalho. Treine um modelo primeiro se quiser que eu analise drift, equidade, estabilidade e risco."
+        ),
+        "response_title": "Resposta local do Aurexis para",
+        "risk": "Classificação de risco",
+        "monitoring": "monitoramento",
+        "jurisdiction": "Jurisdição/estrutura",
+        "score": "Pontuação de risco atual",
+        "next_steps": "Próximos passos recomendados",
+        "casual": "Também podemos continuar em português sobre estudos, trabalho, ideias de produto ou vida diária.",
+    },
+    "it": {
+        "no_metrics": (
+            "Ciao! Posso parlare in italiano di governance dell'IA, conformità, gestione del rischio, "
+            "vita quotidiana, studio e lavoro. Addestra prima un modello se vuoi che analizzi drift, equità, stabilità e rischio."
+        ),
+        "response_title": "Risposta locale di Aurexis per",
+        "risk": "Classificazione del rischio",
+        "monitoring": "monitoraggio",
+        "jurisdiction": "Giurisdizione/framework",
+        "score": "Punteggio di rischio attuale",
+        "next_steps": "Prossimi passi consigliati",
+        "casual": "Possiamo anche continuare in italiano su studio, lavoro, idee di prodotto o vita quotidiana.",
+    },
+}
 
 
 def local_governance_advice(
@@ -1036,27 +1223,10 @@ def local_governance_advice(
 ) -> str:
     prompt = prompt.strip() or "Provide governance guidance."
     language = language or detect_user_language(prompt)
+    copy = LOCAL_ADVISOR_COPY.get(language, LOCAL_ADVISOR_COPY["en"])
 
     if not metrics:
-        if language == "zh":
-            return (
-                "你好！我可以用中文和你交流。你可以和我聊 AI 治理、合规、风险管理，也可以聊日常生活、学习和工作。"
-                "如果你想让我分析模型的漂移、公平性、稳定性和风险，请先在上方训练一个模型。"
-            )
-        if language == "es":
-            return (
-                "Hola. Puedo responder en español. Podemos hablar de gobernanza de IA, cumplimiento, "
-                "vida diaria, aprendizaje o trabajo. Entrena un modelo primero si quieres que analice métricas."
-            )
-        if language == "fr":
-            return (
-                "Bonjour. Je peux répondre en français. Nous pouvons discuter de gouvernance IA, de conformité, "
-                "de vie quotidienne, d'apprentissage ou de travail. Entraînez d'abord un modèle pour analyser les métriques."
-            )
-        return (
-            "Hello. I can discuss AI governance, compliance, daily life, learning, and work with you. "
-            "Train a model first if you want me to analyze drift, fairness, stability, and risk."
-        )
+        return copy["no_metrics"]
 
     recommendations = []
     if metrics.get("risk_score", 0) > 0.6:
@@ -1071,41 +1241,13 @@ def local_governance_advice(
         recommendations.append("Current metrics are within default thresholds; continue periodic monitoring.")
 
     localized_recommendations = translated_recommendations(recommendations, language)
-
-    if language == "zh":
-        return (
-            f"你刚才说：{prompt}\n\n"
-            f"风险分类：{risk_class['classification']}（{risk_class['monitoring_level']} 监控）\n"
-            f"监管/框架：{jurisdiction}\n"
-            f"当前风险分数：{metrics.get('risk_score', 0):.3f}\n\n"
-            "建议的下一步：\n- " + "\n- ".join(localized_recommendations) +
-            "\n\n如果你愿意，我们也可以继续用中文聊你的学习计划、工作流程、产品想法或日常生活。"
-        )
-
-    if language == "es":
-        return (
-            f"Respuesta local de Aurexis para: {prompt}\n\n"
-            f"Clasificación de riesgo: {risk_class['classification']} ({risk_class['monitoring_level']} monitoreo)\n"
-            f"Jurisdicción/marco: {jurisdiction}\n"
-            f"Puntuación de riesgo actual: {metrics.get('risk_score', 0):.3f}\n\n"
-            "Próximos pasos recomendados:\n- " + "\n- ".join(localized_recommendations)
-        )
-
-    if language == "fr":
-        return (
-            f"Réponse locale d'Aurexis pour : {prompt}\n\n"
-            f"Classification du risque : {risk_class['classification']} ({risk_class['monitoring_level']} surveillance)\n"
-            f"Juridiction/cadre : {jurisdiction}\n"
-            f"Score de risque actuel : {metrics.get('risk_score', 0):.3f}\n\n"
-            "Prochaines étapes recommandées :\n- " + "\n- ".join(localized_recommendations)
-        )
-
     return (
-        f"Local Aurexis Advisor response for: {prompt}\n\n"
-        f"Risk classification: {risk_class['classification']} ({risk_class['monitoring_level']} monitoring)\n"
-        f"Jurisdiction/framework: {jurisdiction}\n"
-        f"Current risk score: {metrics.get('risk_score', 0):.3f}\n\n"
-        "Recommended next steps:\n- " + "\n- ".join(localized_recommendations)
+        f"{copy['response_title']}: {prompt}\n\n"
+        f"{copy['risk']}: {risk_class['classification']} ({risk_class['monitoring_level']} {copy['monitoring']})\n"
+        f"{copy['jurisdiction']}: {jurisdiction}\n"
+        f"{copy['score']}: {metrics.get('risk_score', 0):.3f}\n\n"
+        f"{copy['next_steps']}:\n- " + "\n- ".join(localized_recommendations) +
+        f"\n\n{copy['casual']}"
     )
 
 
