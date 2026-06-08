@@ -1416,6 +1416,22 @@ with st.expander("Dependency Status", expanded=False):
         }
     )
 
+with st.expander("🛰️ Aurexis Serverless Governance Twin", expanded=False):
+    st.markdown(
+        """
+        Aurexis can run as autonomous governance infrastructure on Nebius:
+
+        - **Endpoint:** `uvicorn endpoint:app --host 0.0.0.0 --port 8000`
+        - **Evaluate API:** `POST /evaluate`
+        - **Scheduled evaluation job:** `python jobs/governance_job.py`
+        - **Drift simulation job:** `python jobs/drift_simulation_job.py`
+        - **Batch risk job:** `python jobs/batch_risk_job.py`
+        - **Compliance report job:** `python jobs/compliance_report_job.py`
+
+        See `NEBIUS_GOVERNANCE_TWIN.md` and `nebius/aurexis_jobs.yaml` for the reproducible Nebius blueprint.
+        """
+    )
+
 df, data_source = load_data(uploaded_files, domain)
 st.info(f"📁 Data: **{data_source}** | {len(df):,} rows × {len(df.columns)} columns")
 st.dataframe(df.head(10), use_container_width=True)

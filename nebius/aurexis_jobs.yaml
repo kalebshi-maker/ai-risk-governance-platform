@@ -1,0 +1,42 @@
+# Aurexis Serverless Governance Twin - Nebius job manifest
+#
+# Use this file as the reproducible blueprint for Nebius Serverless Jobs.
+# Replace image, project, service account, and schedule fields with your Nebius
+# environment values. The commands are runnable locally as well.
+
+image: "${NEBIUS_IMAGE_REGISTRY}/aurexis-governance-twin:latest"
+environment:
+  AUREXIS_ARTIFACT_DIR: "/tmp/aurexis_serverless_twin"
+  AUREXIS_DRIFT_THRESHOLD: "0.30"
+  AUREXIS_FAIRNESS_THRESHOLD: "0.15"
+  AUREXIS_RISK_THRESHOLD: "0.60"
+  AUREXIS_STABILITY_THRESHOLD: "0.50"
+
+endpoint:
+  name: "aurexis-governance-twin-endpoint"
+  target: "endpoint:app"
+  command: "uvicorn endpoint:app --host 0.0.0.0 --port 8000"
+  health_path: "/health"
+  evaluate_path: "/evaluate"
+
+jobs:
+  - name: "aurexis-scheduled-governance-evaluation"
+    schedule: "0 0 * * *"
+    command: "python jobs/governance_job.py"
+    purpose: "Nightly autonomous governance evaluation."
+
+  - name: "aurexis-drift-simulation-forecast"
+    schedule: "0 1 * * *"
+    command: "python jobs/drift_simulation_job.py"
+    purpose: "Forecast future drift threshold breaches."
+
+  - name: "aurexis-batch-risk-assessment"
+    schedule: "0 2 * * *"
+    command: "python jobs/batch_risk_job.py"
+    purpose: "Evaluate a portfolio of enterprise AI systems."
+
+  - name: "aurexis-compliance-report-generator"
+    schedule: "0 3 * * *"
+    command: "python jobs/compliance_report_job.py"
+    purpose: "Generate EU AI Act, SR 11-7, and UK model risk reports."
+
