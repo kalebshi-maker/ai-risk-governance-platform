@@ -105,6 +105,56 @@ Compliance-ready decisions
 We envision a world where:
 AI systems are governed like financial systems, with continuous monitoring, risk engines, and regulatory-grade transparency.
 
+---
+
+## 🛰 Aurexis Serverless Governance Twin
+
+Aurexis now supports an autonomous governance infrastructure mode in addition to
+the Streamlit dashboard.
+
+### Dashboard
+
+```bash
+python3 -m streamlit run app.py
+```
+
+### Governance Endpoint
+
+```bash
+uvicorn endpoint:app --host 0.0.0.0 --port 8000
+```
+
+Evaluate model outputs:
+
+```bash
+curl -X POST http://localhost:8000/evaluate \
+  -H "Content-Type: application/json" \
+  --data @examples/evaluate_request.json
+```
+
+### Nebius Serverless Jobs
+
+Run autonomous jobs locally or map them to Nebius Serverless Jobs:
+
+```bash
+python jobs/governance_job.py
+python jobs/drift_simulation_job.py
+python jobs/batch_risk_job.py
+python jobs/compliance_report_job.py
+```
+
+Nebius deployment blueprint:
+
+```text
+nebius/aurexis_jobs.yaml
+```
+
+Full guide:
+
+```text
+NEBIUS_GOVERNANCE_TWIN.md
+```
+
 👨‍💻 Author
 Kaleb Carter Shi
  Founder, Aurexis Systems

@@ -1,6 +1,8 @@
 streamlit
 pandas
 numpy
+cryptography
+PyJWT
 scikit-learn
 scipy
 reportlab
@@ -9,5 +11,3 @@ sqlalchemy
 psycopg2-binary
 uvicorn
 fastapi==0.136.3
-cryptography
-PyJWT

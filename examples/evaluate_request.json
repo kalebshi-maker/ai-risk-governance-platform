@@ -1,0 +1,15 @@
+{
+  "model_name": "credit_approval_model",
+  "jurisdiction": "EU AI Act",
+  "predictions": [0, 1, 0, 1, 1, 0],
+  "labels": [0, 1, 1, 1, 0, 0],
+  "reference_rows": [
+    {"feature_0": -0.2, "feature_1": 0.1, "feature_2": 0.3, "label": 0},
+    {"feature_0": 0.6, "feature_1": 0.4, "feature_2": -0.1, "label": 1}
+  ],
+  "production_rows": [
+    {"feature_0": 0.1, "feature_1": 0.4, "feature_2": 0.6, "label": 0},
+    {"feature_0": 0.9, "feature_1": 0.7, "feature_2": 0.2, "label": 1}
+  ]
+}
+
