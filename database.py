@@ -159,3 +159,35 @@ def set_subscription(
             user.stripe_customer_id = stripe_customer_id
         session.flush()
         return _to_record(user)
+
+
+def get_user_by_stripe_customer(stripe_customer_id: str) -> Optional[UserRecord]:
+    if not stripe_customer_id:
+        return None
+    with _session_scope() as session:
+        user = (
+            session.query(User)
+            .filter(User.stripe_customer_id == stripe_customer_id)
+            .one_or_none()
+        )
+        return _to_record(user) if user else None
+
+
+def set_subscription_by_customer(
+    stripe_customer_id: str,
+    subscription: str,
+) -> Optional[UserRecord]:
+    """Update a subscription using the Stripe customer id (used by webhooks)."""
+    if not stripe_customer_id:
+        return None
+    with _session_scope() as session:
+        user = (
+            session.query(User)
+            .filter(User.stripe_customer_id == stripe_customer_id)
+            .one_or_none()
+        )
+        if user is None:
+            return None
+        user.subscription = subscription
+        session.flush()
+        return _to_record(user)
