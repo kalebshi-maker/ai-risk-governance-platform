@@ -134,6 +134,11 @@ celerybeat.pid
 # SageMath parsed files
 *.sage.py
 
+# Aurexis local app database & Streamlit secrets
+aurexis_app.db
+aurexis_app.db-journal
+.streamlit/secrets.toml
+
 # Environments
 .env
 .envrc

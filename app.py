@@ -61,6 +61,11 @@ except Exception:  # pragma: no cover - optional dependency
     OpenAIRateLimitError = Exception
     _OPENAI_AVAILABLE = False
 
+import auth
+import billing
+import database
+import usage
+
 
 # ══════════════════════════════════════════════════════════════════════════
 # PAGE CONFIG
@@ -1289,6 +1294,15 @@ def render_ai_advisor(domain: str, jurisdiction: str) -> None:
     if not user_input:
         return
 
+    account = auth.current_user()
+    if account is not None and not usage.can_chat(account):
+        st.warning(
+            f"You've used all {usage.FREE_CHAT_LIMIT} free advisor messages. "
+            "Upgrade to Pro for unlimited conversations."
+        )
+        billing.render_pricing(account)
+        return
+
     user_language = detect_user_language(user_input)
     language_name = LANGUAGE_LABELS.get(user_language, "the user's language")
     st.caption(f"Detected conversation language: {language_name}")
@@ -1344,6 +1358,56 @@ def render_ai_advisor(domain: str, jurisdiction: str) -> None:
     with st.chat_message("assistant"):
         st.write(reply)
 
+    if account is not None:
+        auth.set_current_user(usage.record_chat(account))
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# ACCOUNT, USAGE & BILLING HELPERS
+# ══════════════════════════════════════════════════════════════════════════
+def _handle_checkout_return() -> None:
+    """Verify and apply a Stripe Checkout result on redirect back to the app."""
+    params = st.query_params
+    checkout = params.get("checkout")
+    if checkout == "success":
+        session_id = params.get("session_id")
+        if session_id:
+            updated = billing.verify_and_apply_checkout(session_id)
+            if updated is not None:
+                auth.set_current_user(updated)
+                st.success("Payment successful — your account is now Pro. Enjoy unlimited access!")
+            else:
+                st.info("We're confirming your payment. If your plan doesn't update shortly, please refresh.")
+        st.query_params.clear()
+    elif checkout == "cancel":
+        st.info("Checkout canceled. You can upgrade anytime from the Plans page.")
+        st.query_params.clear()
+
+
+def _render_account_sidebar(user: "database.UserRecord") -> None:
+    with st.sidebar:
+        st.markdown("### 👤 Account")
+        st.write(user.email)
+        if usage.is_pro(user):
+            st.success("Plan: **Pro** (unlimited)")
+        else:
+            analyses_left = usage.analyses_remaining(user)
+            chat_left = usage.chat_remaining(user)
+            st.info(
+                f"Plan: **Free**\n\n"
+                f"Analyses left: **{analyses_left} / {usage.FREE_ANALYSIS_LIMIT}**\n\n"
+                f"Advisor messages left: **{chat_left} / {usage.FREE_CHAT_LIMIT}**"
+            )
+        col_a, col_b = st.columns(2)
+        if col_a.button("💳 Plans", use_container_width=True, key="sidebar_plans"):
+            st.session_state["show_pricing"] = True
+            st.session_state["pricing_context"] = ""
+            st.rerun()
+        if col_b.button("Sign out", use_container_width=True, key="sidebar_signout"):
+            auth.logout()
+            st.rerun()
+        st.markdown("---")
+
 
 # ══════════════════════════════════════════════════════════════════════════
 # STREAMLIT APP
@@ -1369,9 +1433,27 @@ for key, value in {
     "model_id": None,
     "explainability": None,
     "gov_result": None,
+    "auth_user": None,
+    "show_pricing": False,
+    "pricing_context": "",
+    "checkout_url": None,
 }.items():
     if key not in st.session_state:
         st.session_state[key] = value
+
+# ── Accounts, usage limits, and billing ───────────────────────────────────
+database.init_db()
+_handle_checkout_return()
+_current_user = auth.render_auth_gate()
+_render_account_sidebar(_current_user)
+
+if st.session_state.get("show_pricing"):
+    billing.render_pricing(_current_user, context=st.session_state.get("pricing_context", ""))
+    if st.button("← Back to dashboard", key="back_dashboard"):
+        st.session_state["show_pricing"] = False
+        st.session_state["pricing_context"] = ""
+        st.rerun()
+    st.stop()
 
 st.sidebar.header("⚙️ Governance Configuration")
 jurisdiction = st.sidebar.selectbox(
@@ -1438,7 +1520,14 @@ with col1:
 with col2:
     train_clicked = st.button("🚀 Train Model", use_container_width=True)
 
-if train_clicked:
+if train_clicked and not usage.can_run_analysis(_current_user):
+    st.session_state["show_pricing"] = True
+    st.session_state["pricing_context"] = (
+        f"You've used all {usage.FREE_ANALYSIS_LIMIT} free governance analyses. "
+        "Upgrade to Pro for unlimited assessments."
+    )
+    st.rerun()
+elif train_clicked:
     with st.spinner("Training model and evaluating governance controls..."):
         try:
             X_train, X_test, y_train, y_test, sensitive_train, sensitive_test = split_dataset(
@@ -1479,6 +1568,10 @@ if train_clicked:
             st.session_state.model_id = model_id
             st.session_state.explainability = explainability
             st.session_state.gov_result = gov_result
+
+            if not usage.is_pro(_current_user):
+                _current_user = usage.record_analysis(_current_user)
+                auth.set_current_user(_current_user)
 
             st.success("Model trained and governance assessment completed.")
             st.balloons()
