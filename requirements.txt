@@ -11,3 +11,17 @@ uvicorn
 fastapi==0.136.3
 cryptography
 PyJWT
+fastapi[standard]
+uvicorn[standard]
+streamlit
+numpy
+pandas
+scipy
+scikit-learn
+shap
+fairlearn
+reportlab
+openpyxl
+pyarrow
+openai
+python-dotenv
